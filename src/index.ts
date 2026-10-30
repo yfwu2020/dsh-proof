@@ -10,9 +10,17 @@ import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import z from '@deepseek-ai/schemastery'
 import net from 'node:net'
+import fsx from 'node:fs'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+
+const BOOT = '/tmp/proof-boot.log'
+function trace(msg: string): void {
+  try { fsx.appendFileSync(BOOT, `${new Date().toISOString()} ${msg}\n`) } catch {}
+}
+
+trace('module loaded')
 
 export const name = '@dsh-external/dsh-proof'
 export const inject = ['tools']
@@ -69,6 +77,7 @@ function countFeedItems(root: string): number | null {
 }
 
 export function apply(ctx: Context, config: Config): void {
+  trace('apply called, config=' + JSON.stringify(config))
   ctx.effect(
     () =>
       ctx.tools.register(
