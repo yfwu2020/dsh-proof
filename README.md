@@ -59,6 +59,35 @@ dev_inject_plugin    {"dir": ".../dsh-proof"}
 
 ---
 
+## ⚠️ 已知坑二：`uninject` 会写 `disabled` 条目，挡住下一次注入
+
+`dev_uninject_plugin` 除了卸载 entry，还会往 profile patch 里写：
+
+```yaml
+- id: dsh-proof
+  disabled: true     # 阻断 bundle patch 自装配，防 refresh 加回
+```
+
+之后 `dev_inject_plugin` 创建的同名 entry 会被这条 `disabled` 压住，表现为
+**`host ✗` / `[no-fiber]`，且没有任何报错**。
+
+处理：注入前先把这条从 `~/.dsh/profiles/<profile>/cordis.patch.yml` 删掉；
+或者干脆用 `dev_install_package`（写 package.json + bundles）后**重启**，走正常装配路径。
+
+---
+
+## ⚠️ 已知坑三：运行时 `loader.create({name})` 解析不到本包
+
+`dev_inject_plugin` 内部是 `ctx.loader.create({ name: pkgName, config: {} })`。
+实测该路径**没有真正 import 模块** —— loader entry 里没有 `file://` 行，插件里的启动埋点
+一行都不会写（对比：能正常加载的插件 entry 都是 `file:///…/lib/index.js` 绝对路径）。
+
+结论：**运行时按包名创建 entry 这条路对本包无效**，可靠路径是
+`dev_install_package` 写进 profile 的 `dependencies` + `dsh.profile.bundles`，
+然后**重启宿主**，由启动时的 include 装配加载。
+
+---
+
 ## 代码约定
 
 - 资源注册一律挂 `ctx.effect(...)`：fiber dispose 时自动注销，热重载/卸载不残留。
