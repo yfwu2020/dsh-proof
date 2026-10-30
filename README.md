@@ -95,8 +95,18 @@ dev_inject_plugin    {"dir": ".../dsh-proof"}
 profile 的 `dsh.profile.bundles` **只列出包名**，真正决定“加载哪个 entry、用什么 config”
 的是包根的 `cordis.patch.yml`（`insert:` 语义）。
 
-没有这个文件时：包在 bundles 里、dependencies 里也在，但**启动后什么都不会发生** ——
-没有日志、没有工具、没有报错。本插件最初就漏了这个文件，重启两次都没起来。
+**两处都要有，缺一不可**：
+
+1. 包根放 `cordis.patch.yml`（装配声明本体）；
+2. `package.json` 里声明它的位置：
+
+```json
+"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+```
+
+只放文件、不声明 → include 不知道去哪读；只声明、不放文件 → 读不到。
+任一缺失的表现都一样：包在 `bundles` 里、在 `dependencies` 里，但**启动后什么都不会发生** ——
+没有日志、没有工具、没有报错。本插件最初两处都漏了，重启两次都没起来。
 
 最小形态：
 
