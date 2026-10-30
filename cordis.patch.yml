@@ -1,0 +1,14 @@
+# dsh-proof — PROOF · 本地原型工作台
+#
+# 本文件是 bundle 插件的装配声明：profile 的 dsh.profile.bundles 只列出包名，
+# 真正决定“加载哪个 entry、用什么 config”的是包根的这个文件（insert 语义新增 entry）。
+# 没有它，包即使出现在 bundles 里也不会被装配 —— 表现为启动后完全没有日志、没有工具。
+#
+# 注意：patch 语义是“整行替换 config”，改这里等于改运行时配置。
+- insert:
+    - id: proof
+      name: '@dsh-external/dsh-proof'
+      config:
+        port: 8321
+        # 投放目录：静态服务 --directory 指向的路径（proof_status 会读它统计条目）
+        root: /Users/yfwu2025/Desktop/Code/DSH/Plugins/ipad-demo

@@ -88,6 +88,29 @@ dev_inject_plugin    {"dir": ".../dsh-proof"}
 
 ---
 
+---
+
+## ⚠️ 已知坑四（根因）：bundle 插件必须自带 `cordis.patch.yml`
+
+profile 的 `dsh.profile.bundles` **只列出包名**，真正决定“加载哪个 entry、用什么 config”
+的是包根的 `cordis.patch.yml`（`insert:` 语义）。
+
+没有这个文件时：包在 bundles 里、dependencies 里也在，但**启动后什么都不会发生** ——
+没有日志、没有工具、没有报错。本插件最初就漏了这个文件，重启两次都没起来。
+
+最小形态：
+
+```yaml
+- insert:
+    - id: proof
+      name: '@dsh-external/dsh-proof'
+      config:
+        port: 8321
+        root: /path/to/served-dir
+```
+
+---
+
 ## 代码约定
 
 - 资源注册一律挂 `ctx.effect(...)`：fiber dispose 时自动注销，热重载/卸载不残留。
