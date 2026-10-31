@@ -1,6 +1,25 @@
 # PROOF — 本地原型工作台
 
-当前是插件骨架，只提供只读工具 `proof_status`：检查本地服务、局域网地址和投放目录中的 `feed.json` 条目数。发布、版本管理、构建、自动打开功能尚未实现。
+v0.1.0 起具备最小可用闭环：**发布一个目录 → 服务自动启动 → 写进收件箱 → iPad 刷新即见**。
+
+三个工具：
+
+| 工具 | 作用 |
+|---|---|
+| `proof_status` | 服务状态、局域网地址、收件箱条目、已发布项目数 |
+| `proof_publish` | 发布目录/文件成新版本，自动起服务并写收件箱 |
+| `proof_serve` | 手动 `start` / `stop` / `status`（发布时会自动启动） |
+
+发布语义：
+
+```
+源目录  →  <root>/p/<slug>/v<N>/    （复制，跳过 node_modules/.git）
+        →  <root>/.proof/versions.json （版本登记）
+        →  <root>/feed.json           （收件箱，auto=true 时 iPad 自动打开）
+```
+
+服务：`server.py` 由插件以 detached 子进程拉起，每 30 秒检查一次活动时间，
+空闲超过 `idleMinutes`（默认 60）自动退出。
 
 ## 构建与验证
 
@@ -30,7 +49,16 @@ npm run typecheck
 
 ## 目录
 
-- `src/index.ts`：插件源码；资源注册由 `ctx.effect` 管理，卸载时清理。
-- `cordis.patch.yml`：bundle 装配声明。
+- `src/index.ts`：插件源码；三个工具，资源注册由 `ctx.effect` 管理。
+- `server.py`：静态服务（按需启动、空闲自停、记录活动时间）。
+- `cordis.patch.yml`：bundle 装配声明（port / root / idleMinutes）。
 - `scripts/build.sh`：链接构建依赖并编译。
 - `smoke-test.mjs`：通过实际 TCP 服务验证状态工具。
+- `<root>/.proof/`：运行状态（`versions.json` 版本登记、`server.json` 进程、`activity` 活动时间）。
+
+## 已知限制
+
+- 没有版本回退的 CLI（`versions.json` 里有全部记录，回退得手动切目录）
+- 不接入构建：发布的是**目录现状**，`vite build` 之类的产物需要先构建再发布
+- 收件箱上限 50 条（超出丢尾部）
+- 中文项目名会进 slug（路径里出现中文，部分老设备 URL 编码可能别扭）

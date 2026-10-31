@@ -1,10 +1,12 @@
 /**
- * @dsh-external/dsh-proof — PROOF 工具包（骨架 v0.0.1）
+ * @dsh-external/dsh-proof — PROOF 工具包
  *
- * 当前只提供一个**只读**工具 `proof_status`：报告本地 PROOF 服务是否在跑。
- * 发布 / 版本 / 构建 / 自动打开等业务逻辑尚未实现。
+ * 工具面：
+ * - proof_status  查看服务/投放目录状态（只读）
+ * - proof_publish 把一个目录或文件发布成新版本，自动起服务并写收件箱
+ * - proof_serve   手动启停静态服务（发布时会自动启动）
  *
- * 资源注册一律挂 ctx.effect：fiber dispose 时自动注销，热重载不残留。
+ * 资源注册一律挂 ctx.effect：fiber dispose 时自动注销。
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -13,23 +15,29 @@ import net from 'node:net'
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 export const name = '@dsh-external/dsh-proof'
 export const inject = ['tools']
 
 export interface Config {
-  /** PROOF 本地服务端口 */
+  /** 静态服务端口 */
   port: number
-  /** 投放目录（静态服务的 --directory），留空则只报连接状态 */
+  /** 投放目录（静态服务的根） */
   root: string
+  /** 空闲多少分钟后自动停服务 */
+  idleMinutes: number
 }
 
 export const Config = z.object({
   port: z.natural().default(8321),
   root: z.string().default(''),
+  idleMinutes: z.natural().default(60),
 })
 
-/** 取第一个非回环 IPv4，用于拼局域网地址 */
+const SKIP = new Set(['node_modules', '.git', '.DS_Store', '.proof'])
+
 function lanIPv4(): string | undefined {
   for (const list of Object.values(os.networkInterfaces())) {
     for (const ni of list ?? []) {
@@ -39,7 +47,6 @@ function lanIPv4(): string | undefined {
   return undefined
 }
 
-/** TCP 探活：能连上就算在跑 */
 function probe(host: string, port: number, timeoutMs = 800): Promise<boolean> {
   return new Promise((resolve) => {
     const sock = net.connect({ host, port })
@@ -57,18 +64,126 @@ function probe(host: string, port: number, timeoutMs = 800): Promise<boolean> {
   })
 }
 
-function countFeedItems(root: string): number | null {
-  if (!root) return null
+function stateDir(root: string): string {
+  const d = path.join(root, '.proof')
+  fs.mkdirSync(d, { recursive: true })
+  return d
+}
+
+function readJson<T>(file: string, fallback: T): T {
   try {
-    const raw = fs.readFileSync(path.join(root, 'feed.json'), 'utf8')
-    const data = JSON.parse(raw) as { items?: unknown[] }
-    return Array.isArray(data.items) ? data.items.length : null
+    return JSON.parse(fs.readFileSync(file, 'utf8')) as T
   } catch {
-    return null
+    return fallback
   }
 }
 
+function writeJson(file: string, data: unknown): void {
+  fs.mkdirSync(path.dirname(file), { recursive: true })
+  fs.writeFileSync(file, JSON.stringify(data, null, 2))
+}
+
+function slugify(s: string): string {
+  const cleaned = s
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 48)
+  return cleaned || 'project'
+}
+
+function dirBytes(dir: string): number {
+  let total = 0
+  const walk = (p: string) => {
+    let st: fs.Stats
+    try {
+      st = fs.statSync(p)
+    } catch {
+      return
+    }
+    if (st.isDirectory()) {
+      for (const e of fs.readdirSync(p)) walk(path.join(p, e))
+    } else {
+      total += st.size
+    }
+  }
+  walk(dir)
+  return total
+}
+
+function copyTree(src: string, dest: string): void {
+  fs.mkdirSync(dest, { recursive: true })
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (SKIP.has(entry.name)) continue
+    const s = path.join(src, entry.name)
+    const d = path.join(dest, entry.name)
+    if (entry.isDirectory()) copyTree(s, d)
+    else if (entry.isFile()) fs.copyFileSync(s, d)
+  }
+}
+
+interface VersionRec {
+  v: number
+  at: string
+  note: string
+  dir: string
+  src: string
+  bytes: number
+}
+
+interface Registry {
+  projects: Record<string, VersionRec[]>
+}
+
+function serverScript(): string {
+  return fileURLToPath(new URL('../server.py', import.meta.url))
+}
+
+async function ensureServer(root: string, port: number, idleMinutes: number): Promise<boolean> {
+  if (await probe('127.0.0.1', port)) return true
+  const sd = stateDir(root)
+  const activity = path.join(sd, 'activity')
+  const child = spawn(
+    'python3',
+    [serverScript(), root, String(port), String(idleMinutes), activity],
+    { detached: true, stdio: 'ignore' },
+  )
+  child.unref()
+  if (child.pid) {
+    writeJson(path.join(sd, 'server.json'), {
+      pid: child.pid,
+      port,
+      startedAt: new Date().toISOString(),
+    })
+  }
+  for (let i = 0; i < 20; i++) {
+    await new Promise((r) => setTimeout(r, 150))
+    if (await probe('127.0.0.1', port)) return true
+  }
+  return false
+}
+
+function stopServer(root: string): boolean {
+  const sd = stateDir(root)
+  const state = readJson<{ pid?: number }>(path.join(sd, 'server.json'), {})
+  if (!state.pid) return false
+  try {
+    process.kill(state.pid, 'SIGTERM')
+  } catch {
+    /* 进程可能已经自己退了 */
+  }
+  fs.rmSync(path.join(sd, 'server.json'), { force: true })
+  return true
+}
+
 export function apply(ctx: Context, config: Config): void {
+  const root = config.root
+
+  const requireRoot = (): string => {
+    if (!root) throw new Error('插件未配置投放目录（config.root）')
+    return root
+  }
+
   ctx.effect(
     () =>
       ctx.tools.register(
@@ -76,37 +191,150 @@ export function apply(ctx: Context, config: Config): void {
           name: 'proof_status',
           description: '查看 PROOF 本地服务是否在跑、局域网地址与投放目录状态。',
           parameters: {
-            verbose: {
-              type: 'boolean',
-              description: '附带路径、端口与条目数',
-            },
+            verbose: { type: 'boolean', description: '附带路径、端口与条目数' },
           },
           output: {
             schema: { type: 'string' },
-            render: (_args: unknown, value: unknown) => [{ type: 'text', text: String(value) }],
+            render: (_a: unknown, v: unknown) => [{ type: 'text', text: String(v) }],
           },
           async execute(args: { verbose?: boolean }) {
             const ip = lanIPv4()
             const running = await probe('127.0.0.1', config.port)
-            const items = countFeedItems(config.root)
             const lan = ip ? `http://${ip}:${config.port}/` : '（未找到局域网地址）'
-
+            const feed = readJson<{ items?: unknown[] }>(path.join(root, 'feed.json'), {})
+            const items = Array.isArray(feed.items) ? feed.items.length : null
             if (!args.verbose) {
               return running
                 ? `PROOF 服务运行中 · ${lan}`
                 : `PROOF 服务未运行（端口 ${config.port} 无监听）`
             }
-
+            const reg = readJson<Registry>(path.join(root, '.proof', 'versions.json'), { projects: {} })
+            const projects = Object.keys(reg.projects).length
             return [
               `状态：${running ? '运行中' : '未运行'}`,
               `端口：${config.port}`,
               `局域网：${lan}`,
-              `投放目录：${config.root || '（未配置）'}`,
+              `投放目录：${root || '（未配置）'}`,
               `收件箱条目：${items === null ? '—' : String(items)}`,
+              `已发布项目：${projects}`,
+              `空闲停止：${config.idleMinutes} 分钟`,
             ].join('\n')
           },
         }),
       ),
     '@dsh-external/dsh-proof: proof_status',
+  )
+
+  ctx.effect(
+    () =>
+      ctx.tools.register(
+        defineTool({
+          name: 'proof_publish',
+          description: '把目录发布成新版本并送到 iPad（自动起服务、写收件箱）。',
+          parameters: {
+            source: { type: 'string', required: true, description: '要发布的目录或文件绝对路径' },
+            project: { type: 'string', description: '项目名（默认取目录名）' },
+            note: { type: 'string', description: '这一版的说明，一句话' },
+            auto: { type: 'boolean', description: 'iPad 是否自动打开（默认是）' },
+          },
+          output: {
+            schema: { type: 'string' },
+            render: (_a: unknown, v: unknown) => [{ type: 'text', text: String(v) }],
+          },
+          async execute(args: { source: string; project?: string; note?: string; auto?: boolean }) {
+            const r = requireRoot()
+            const src = path.resolve(args.source)
+            if (!fs.existsSync(src)) throw new Error(`源路径不存在：${src}`)
+
+            const slug = slugify(args.project || path.basename(src))
+            const regFile = path.join(r, '.proof', 'versions.json')
+            const reg = readJson<Registry>(regFile, { projects: {} })
+            const list = reg.projects[slug] ?? []
+            const v = list.reduce((m, x) => Math.max(m, x.v), 0) + 1
+
+            const rel = `p/${slug}/v${v}`
+            const destDir = path.join(r, rel)
+            fs.rmSync(destDir, { recursive: true, force: true })
+
+            const stat = fs.statSync(src)
+            if (stat.isDirectory()) copyTree(src, destDir)
+            else {
+              fs.mkdirSync(destDir, { recursive: true })
+              fs.copyFileSync(src, path.join(destDir, path.basename(src)))
+            }
+
+            const bytes = dirBytes(destDir)
+            const at = new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+            const rec: VersionRec = { v, at, note: args.note ?? '', dir: rel, src, bytes }
+            list.push(rec)
+            reg.projects[slug] = list
+            writeJson(regFile, reg)
+
+            const auto = args.auto !== false
+            const feedFile = path.join(r, 'feed.json')
+            const feed = readJson<{ items: unknown[] }>(feedFile, { items: [] })
+            feed.items.unshift({
+              kind: '版本',
+              time: new Date().toTimeString().slice(0, 8),
+              ts: Math.round(Date.now() / 1000),
+              title: `${slug} v${v}`,
+              body: args.note ?? `发布了 ${slug} 的第 ${v} 版`,
+              url: `${rel}/`,
+              cta: `打开 v${v}`,
+              auto,
+            })
+            feed.items = feed.items.slice(0, 50)
+            writeJson(feedFile, feed)
+
+            const up = await ensureServer(r, config.port, config.idleMinutes)
+            const ip = lanIPv4()
+            const base = ip ? `http://${ip}:${config.port}` : `http://127.0.0.1:${config.port}`
+
+            return [
+              `已发布 ${slug} v${v}`,
+              `版本目录：${rel}/（${(bytes / 1024).toFixed(0)} KB）`,
+              `访问地址：${base}/${rel}/`,
+              `收件箱：${feed.items.length} 条${auto ? '，iPad 刷新后自动打开' : ''}`,
+              `服务：${up ? '运行中' : '启动失败（端口可能被占用）'}`,
+            ].join('\n')
+          },
+        }),
+      ),
+    '@dsh-external/dsh-proof: proof_publish',
+  )
+
+  ctx.effect(
+    () =>
+      ctx.tools.register(
+        defineTool({
+          name: 'proof_serve',
+          description: '手动启停 PROOF 静态服务（发布时会自动启动，一般不用调）。',
+          parameters: {
+            action: { type: 'string', required: true, description: 'start | stop | status' },
+          },
+          output: {
+            schema: { type: 'string' },
+            render: (_a: unknown, v: unknown) => [{ type: 'text', text: String(v) }],
+          },
+          async execute(args: { action: string }) {
+            const r = requireRoot()
+            const act = (args.action || '').toLowerCase()
+            if (act === 'stop') {
+              const ok = stopServer(r)
+              await new Promise((res) => setTimeout(res, 300))
+              const still = await probe('127.0.0.1', config.port)
+              return ok || !still ? '服务已停止' : '停止失败（进程可能不是本插件启动的）'
+            }
+            if (act === 'status') {
+              const running = await probe('127.0.0.1', config.port)
+              return running ? `服务运行中（:${config.port}）` : `服务未运行（:${config.port}）`
+            }
+            if (act !== 'start') throw new Error(`未知动作：${args.action}（start | stop | status）`)
+            const ok = await ensureServer(r, config.port, config.idleMinutes)
+            return ok ? `服务已启动（:${config.port}）` : '启动失败（端口可能被占用）'
+          },
+        }),
+      ),
+    '@dsh-external/dsh-proof: proof_serve',
   )
 }
