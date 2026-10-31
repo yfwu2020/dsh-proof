@@ -28,12 +28,15 @@ export interface Config {
   root: string
   /** 空闲多少分钟后自动停服务 */
   idleMinutes: number
+  /** 首页应用目录（发布后写 data.json 给它读） */
+  appDir: string
 }
 
 export const Config = z.object({
   port: z.natural().default(8321),
   root: z.string().default(''),
   idleMinutes: z.natural().default(60),
+  appDir: z.string().default(''),
 })
 
 const SKIP = new Set(['node_modules', '.git', '.DS_Store', '.proof'])
@@ -124,6 +127,7 @@ function copyTree(src: string, dest: string): void {
 
 interface VersionRec {
   v: number
+  ts: number
   at: string
   note: string
   dir: string
@@ -133,6 +137,28 @@ interface VersionRec {
 
 interface Registry {
   projects: Record<string, VersionRec[]>
+}
+
+function rebuildData(appDir: string, reg: Registry): string {
+  const projects = Object.keys(reg.projects).map((slug) => {
+    const list = reg.projects[slug].slice().sort((a, b) => b.v - a.v)
+    return {
+      slug,
+      name: slug,
+      versions: list,
+      latest: list[0]?.v ?? 0,
+      count: list.length,
+      bytes: list.reduce((sum, x) => sum + (x.bytes || 0), 0),
+    }
+  })
+  projects.sort((a, b) => (b.versions[0]?.ts ?? 0) - (a.versions[0]?.ts ?? 0))
+  const data = {
+    updated: new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-'),
+    projects,
+  }
+  const file = path.join(appDir, 'data.json')
+  writeJson(file, data)
+  return file
 }
 
 function serverScript(): string {
@@ -201,8 +227,12 @@ export function apply(ctx: Context, config: Config): void {
             const ip = lanIPv4()
             const running = await probe('127.0.0.1', config.port)
             const lan = ip ? `http://${ip}:${config.port}/` : '（未找到局域网地址）'
-            const feed = readJson<{ items?: unknown[] }>(path.join(root, 'feed.json'), {})
-            const items = Array.isArray(feed.items) ? feed.items.length : null
+            const appDir = config.appDir || path.join(root, 'proof', 'home-v1')
+            const dataRec = readJson<{ updated?: string; projects?: unknown[] }>(
+              path.join(appDir, 'data.json'),
+              {},
+            )
+            const items = Array.isArray(dataRec.projects) ? dataRec.projects.length : null
             if (!args.verbose) {
               return running
                 ? `PROOF 服务运行中 · ${lan}`
@@ -215,7 +245,8 @@ export function apply(ctx: Context, config: Config): void {
               `端口：${config.port}`,
               `局域网：${lan}`,
               `投放目录：${root || '（未配置）'}`,
-              `收件箱条目：${items === null ? '—' : String(items)}`,
+              `首页项目数：${items === null ? '—' : String(items)}`,
+              `数据更新：${dataRec.updated ?? '—'}`,
               `已发布项目：${projects}`,
               `空闲停止：${config.idleMinutes} 分钟`,
             ].join('\n')
@@ -264,27 +295,15 @@ export function apply(ctx: Context, config: Config): void {
             }
 
             const bytes = dirBytes(destDir)
+            const ts = Math.round(Date.now() / 1000)
             const at = new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
-            const rec: VersionRec = { v, at, note: args.note ?? '', dir: rel, src, bytes }
+            const rec: VersionRec = { v, ts, at, note: args.note ?? '', dir: rel, src, bytes }
             list.push(rec)
             reg.projects[slug] = list
             writeJson(regFile, reg)
 
-            const auto = args.auto !== false
-            const feedFile = path.join(r, 'feed.json')
-            const feed = readJson<{ items: unknown[] }>(feedFile, { items: [] })
-            feed.items.unshift({
-              kind: '版本',
-              time: new Date().toTimeString().slice(0, 8),
-              ts: Math.round(Date.now() / 1000),
-              title: `${slug} v${v}`,
-              body: args.note ?? `发布了 ${slug} 的第 ${v} 版`,
-              url: `${rel}/`,
-              cta: `打开 v${v}`,
-              auto,
-            })
-            feed.items = feed.items.slice(0, 50)
-            writeJson(feedFile, feed)
+            const appDir = config.appDir || path.join(r, 'proof', 'home-v1')
+            rebuildData(appDir, reg)
 
             const up = await ensureServer(r, config.port, config.idleMinutes)
             const ip = lanIPv4()
@@ -293,8 +312,8 @@ export function apply(ctx: Context, config: Config): void {
             return [
               `已发布 ${slug} v${v}`,
               `版本目录：${rel}/（${(bytes / 1024).toFixed(0)} KB）`,
-              `访问地址：${base}/${rel}/`,
-              `收件箱：${feed.items.length} 条${auto ? '，iPad 刷新后自动打开' : ''}`,
+              `版本地址：${base}/${rel}/`,
+              `首页：${base}/proof/home-v1/（刷新即见 v${v}）`,
               `服务：${up ? '运行中' : '启动失败（端口可能被占用）'}`,
             ].join('\n')
           },

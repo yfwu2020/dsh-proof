@@ -1,6 +1,9 @@
 # PROOF — 本地原型工作台
 
-v0.1.0 起具备最小可用闭环：**发布一个目录 → 服务自动启动 → 写进收件箱 → iPad 刷新即见**。
+v0.2.0 起具备最小可用闭环：**发布一个目录 → 服务自动启动 → 首页立即更新 → iPad 刷新即见**。
+
+没有收件箱了：根路径 `/` 直接 302 到首页 `/proof/home-v1/`。每次发布重写首页的
+`data.json`，页面读它渲染（项目、版本、时间线全部来自真实发布记录）。
 
 三个工具：
 
@@ -13,10 +16,18 @@ v0.1.0 起具备最小可用闭环：**发布一个目录 → 服务自动启动
 发布语义：
 
 ```
-源目录  →  <root>/p/<slug>/v<N>/    （复制，跳过 node_modules/.git）
-        →  <root>/.proof/versions.json （版本登记）
-        →  <root>/feed.json           （收件箱，auto=true 时 iPad 自动打开）
+源目录  →  <root>/p/<slug>/v<N>/         （复制，跳过 node_modules/.git）
+        →  <root>/.proof/versions.json   （版本登记，内部状态）
+        →  <root>/proof/home-v1/data.json（首页数据，页面直接读）
 ```
+
+访问入口：
+
+- `http://<ip>:8321/` → 302 → 首页
+- `http://<ip>:8321/proof/home-v1/` → 首页（项目数、版本数、最新发布、最近更新）
+- `http://<ip>:8321/proof/home-v1/projects.html` → 全部项目
+- `http://<ip>:8321/proof/home-v1/project.html?p=<slug>&v=<n>` → 项目页
+- `http://<ip>:8321/p/<slug>/v<n>/` → 某一版本身（旧版永久可开）
 
 服务：`server.py` 由插件以 detached 子进程拉起，每 30 秒检查一次活动时间，
 空闲超过 `idleMinutes`（默认 60）自动退出。
@@ -60,5 +71,4 @@ npm run typecheck
 
 - 没有版本回退的 CLI（`versions.json` 里有全部记录，回退得手动切目录）
 - 不接入构建：发布的是**目录现状**，`vite build` 之类的产物需要先构建再发布
-- 收件箱上限 50 条（超出丢尾部）
 - 中文项目名会进 slug（路径里出现中文，部分老设备 URL 编码可能别扭）
