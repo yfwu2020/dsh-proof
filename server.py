@@ -85,6 +85,19 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/data.json":
             self.send_data()
             return
+        # ?list=1 强制列出目录内容（否则有 index.html 时会直接返回首页）
+        if urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("list") == ["1"]:
+            target = self.translate_path(path)
+            if os.path.isdir(target):
+                # list_directory 只发响应头并返回文件对象，body 要自己 copy
+                listing = self.list_directory(target)
+                try:
+                    if listing:
+                        self.copyfile(listing, self.wfile)
+                finally:
+                    if listing:
+                        listing.close()
+                return
         super().do_GET()
 
     def send_data(self):
