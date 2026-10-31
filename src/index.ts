@@ -58,6 +58,7 @@ interface FileRec {
   p: string
   kind: Kind
   bytes: number
+  mtime: number
 }
 
 interface ProjectRec {
@@ -171,7 +172,7 @@ function collectFiles(dir: string): FileRec[] {
       }
       if (st.isDirectory()) walk(base, r, depth + 1)
       else if (st.isFile()) {
-        out.push({ p: r, kind: kindOfFile(r), bytes: st.size })
+        out.push({ p: r, kind: kindOfFile(r), bytes: st.size, mtime: Math.round(st.mtimeMs) })
         if (out.length >= 400) return
       }
     }
