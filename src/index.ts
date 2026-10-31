@@ -1,12 +1,14 @@
 /**
  * @dsh-external/dsh-proof — PROOF 工具包
  *
- * 工具面：
- * - proof_status  查看服务/投放目录状态（只读）
- * - proof_publish 把一个目录或文件发布成新版本，自动起服务并写收件箱
- * - proof_serve   手动启停静态服务（发布时会自动启动）
+ * 模型（0.3）：**一次发送 = 一个项目**，不留版本历史。
+ * 项目页 = 该项目的文件浏览器，按类型分类（网页 / 图片 / 视频 / 文档 / 产物 / 其他）。
  *
- * 资源注册一律挂 ctx.effect：fiber dispose 时自动注销。
+ * 工具面：
+ * - proof_send    发送一个目录或文件到 iPad（同名覆盖）
+ * - proof_remove  删除一个已发送的项目
+ * - proof_status  服务与投放目录状态（只读）
+ * - proof_serve   手动启停静态服务
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -22,13 +24,9 @@ export const name = '@dsh-external/dsh-proof'
 export const inject = ['tools']
 
 export interface Config {
-  /** 静态服务端口 */
   port: number
-  /** 投放目录（静态服务的根） */
   root: string
-  /** 空闲多少分钟后自动停服务 */
   idleMinutes: number
-  /** 首页应用目录（发布后写 data.json 给它读） */
   appDir: string
 }
 
@@ -40,6 +38,32 @@ export const Config = z.object({
 })
 
 const SKIP = new Set(['node_modules', '.git', '.DS_Store', '.proof'])
+
+type Kind = 'web' | 'image' | 'video' | 'doc' | 'asset' | 'file'
+
+interface FileRec {
+  p: string
+  kind: Kind
+  bytes: number
+}
+
+interface ProjectRec {
+  slug: string
+  name: string
+  kind: Kind
+  dir: string
+  src: string
+  bytes: number
+  count: number
+  ts: number
+  at: string
+  counts: Record<string, number>
+  files: FileRec[]
+}
+
+interface Registry {
+  projects: Record<string, ProjectRec>
+}
 
 function lanIPv4(): string | undefined {
   for (const list of Object.values(os.networkInterfaces())) {
@@ -67,12 +91,6 @@ function probe(host: string, port: number, timeoutMs = 800): Promise<boolean> {
   })
 }
 
-function stateDir(root: string): string {
-  const d = path.join(root, '.proof')
-  fs.mkdirSync(d, { recursive: true })
-  return d
-}
-
 function readJson<T>(file: string, fallback: T): T {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8')) as T
@@ -92,26 +110,17 @@ function slugify(s: string): string {
     .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 48)
-  return cleaned || 'project'
+  return cleaned || 'item'
 }
 
-function dirBytes(dir: string): number {
-  let total = 0
-  const walk = (p: string) => {
-    let st: fs.Stats
-    try {
-      st = fs.statSync(p)
-    } catch {
-      return
-    }
-    if (st.isDirectory()) {
-      for (const e of fs.readdirSync(p)) walk(path.join(p, e))
-    } else {
-      total += st.size
-    }
-  }
-  walk(dir)
-  return total
+function kindOfFile(p: string): Kind {
+  const ext = path.extname(p).toLowerCase()
+  if (ext === '.html' || ext === '.htm') return 'web'
+  if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif', '.heic'].includes(ext)) return 'image'
+  if (['.mp4', '.mov', '.webm', '.m4v', '.ogv'].includes(ext)) return 'video'
+  if (['.pdf', '.md', '.txt', '.csv'].includes(ext)) return 'doc'
+  if (['.js', '.mjs', '.css', '.json', '.wasm', '.map', '.woff', '.woff2', '.ttf'].includes(ext)) return 'asset'
+  return 'file'
 }
 
 function copyTree(src: string, dest: string): void {
@@ -125,40 +134,42 @@ function copyTree(src: string, dest: string): void {
   }
 }
 
-interface VersionRec {
-  v: number
-  ts: number
-  at: string
-  note: string
-  dir: string
-  src: string
-  bytes: number
-}
-
-interface Registry {
-  projects: Record<string, VersionRec[]>
-}
-
-function rebuildData(appDir: string, reg: Registry): string {
-  const projects = Object.keys(reg.projects).map((slug) => {
-    const list = reg.projects[slug].slice().sort((a, b) => b.v - a.v)
-    return {
-      slug,
-      name: slug,
-      versions: list,
-      latest: list[0]?.v ?? 0,
-      count: list.length,
-      bytes: list.reduce((sum, x) => sum + (x.bytes || 0), 0),
+/** 采集文件清单（相对路径 + 类型 + 大小），最多 400 条 */
+function collectFiles(dir: string): FileRec[] {
+  const out: FileRec[] = []
+  const walk = (base: string, rel: string) => {
+    if (out.length >= 400) return
+    for (const entry of fs.readdirSync(path.join(base, rel), { withFileTypes: true })) {
+      if (SKIP.has(entry.name)) continue
+      const r = rel ? `${rel}/${entry.name}` : entry.name
+      if (entry.isDirectory()) walk(base, r)
+      else if (entry.isFile()) {
+        const st = fs.statSync(path.join(base, r))
+        out.push({ p: r, kind: kindOfFile(r), bytes: st.size })
+        if (out.length >= 400) return
+      }
     }
-  })
-  projects.sort((a, b) => (b.versions[0]?.ts ?? 0) - (a.versions[0]?.ts ?? 0))
-  const data = {
-    updated: new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-'),
-    projects,
   }
-  const file = path.join(appDir, 'data.json')
-  writeJson(file, data)
-  return file
+  walk(dir, '')
+  return out
+}
+
+function projectKind(files: FileRec[]): Kind {
+  if (files.some((f) => f.p.toLowerCase().endsWith('index.html'))) return 'web'
+  if (files.length && files.every((f) => f.kind === 'image')) return 'image'
+  if (files.length && files.every((f) => f.kind === 'video')) return 'video'
+  return files.length === 1 ? files[0].kind : 'file'
+}
+
+function rebuildData(appDir: string, reg: Registry): void {
+  const projects = Object.values(reg.projects).sort((a, b) => b.ts - a.ts)
+  const totals: Record<string, number> = {}
+  for (const p of projects) for (const k of Object.keys(p.counts)) totals[k] = (totals[k] ?? 0) + p.counts[k]
+  writeJson(path.join(appDir, 'data.json'), {
+    updated: new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-'),
+    totals,
+    projects,
+  })
 }
 
 function serverScript(): string {
@@ -167,21 +178,14 @@ function serverScript(): string {
 
 async function ensureServer(root: string, port: number, idleMinutes: number): Promise<boolean> {
   if (await probe('127.0.0.1', port)) return true
-  const sd = stateDir(root)
-  const activity = path.join(sd, 'activity')
-  const child = spawn(
-    'python3',
-    [serverScript(), root, String(port), String(idleMinutes), activity],
-    { detached: true, stdio: 'ignore' },
-  )
+  const sd = path.join(root, '.proof')
+  fs.mkdirSync(sd, { recursive: true })
+  const child = spawn('python3', [serverScript(), root, String(port), String(idleMinutes), path.join(sd, 'activity')], {
+    detached: true,
+    stdio: 'ignore',
+  })
   child.unref()
-  if (child.pid) {
-    writeJson(path.join(sd, 'server.json'), {
-      pid: child.pid,
-      port,
-      startedAt: new Date().toISOString(),
-    })
-  }
+  if (child.pid) writeJson(path.join(sd, 'server.json'), { pid: child.pid, port, startedAt: new Date().toISOString() })
   for (let i = 0; i < 20; i++) {
     await new Promise((r) => setTimeout(r, 150))
     if (await probe('127.0.0.1', port)) return true
@@ -190,21 +194,22 @@ async function ensureServer(root: string, port: number, idleMinutes: number): Pr
 }
 
 function stopServer(root: string): boolean {
-  const sd = stateDir(root)
-  const state = readJson<{ pid?: number }>(path.join(sd, 'server.json'), {})
+  const sf = path.join(root, '.proof', 'server.json')
+  const state = readJson<{ pid?: number }>(sf, {})
   if (!state.pid) return false
   try {
     process.kill(state.pid, 'SIGTERM')
   } catch {
-    /* 进程可能已经自己退了 */
+    /* 已自行退出 */
   }
-  fs.rmSync(path.join(sd, 'server.json'), { force: true })
+  fs.rmSync(sf, { force: true })
   return true
 }
 
 export function apply(ctx: Context, config: Config): void {
   const root = config.root
-
+  const regFile = () => path.join(root, '.proof', 'items.json')
+  const appDir = () => config.appDir || path.join(root, 'proof', 'home-v1')
   const requireRoot = (): string => {
     if (!root) throw new Error('插件未配置投放目录（config.root）')
     return root
@@ -214,11 +219,114 @@ export function apply(ctx: Context, config: Config): void {
     () =>
       ctx.tools.register(
         defineTool({
-          name: 'proof_status',
-          description: '查看 PROOF 本地服务是否在跑、局域网地址与投放目录状态。',
+          name: 'proof_send',
+          description: '把目录或文件发送到 iPad（同名项目覆盖），自动起服务。',
           parameters: {
-            verbose: { type: 'boolean', description: '附带路径、端口与条目数' },
+            source: { type: 'string', required: true, description: '要发送的目录或文件绝对路径' },
+            name: { type: 'string', description: '项目名（默认取文件名/目录名）' },
           },
+          output: {
+            schema: { type: 'string' },
+            render: (_a: unknown, v: unknown) => [{ type: 'text', text: String(v) }],
+          },
+          async execute(args: { source: string; name?: string }) {
+            const r = requireRoot()
+            const src = path.resolve(args.source)
+            if (!fs.existsSync(src)) throw new Error(`路径不存在：${src}`)
+
+            const base = args.name || path.basename(src)
+            const slug = slugify(base)
+            const destDir = path.join(r, 'f', slug)
+            fs.rmSync(destDir, { recursive: true, force: true })
+
+            const st = fs.statSync(src)
+            if (st.isDirectory()) copyTree(src, destDir)
+            else {
+              fs.mkdirSync(destDir, { recursive: true })
+              fs.copyFileSync(src, path.join(destDir, path.basename(src)))
+            }
+
+            const files = collectFiles(destDir)
+            const counts: Record<string, number> = {}
+            for (const f of files) counts[f.kind] = (counts[f.kind] ?? 0) + 1
+            const bytes = files.reduce((s, f) => s + f.bytes, 0)
+            const ts = Math.round(Date.now() / 1000)
+            const at = new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+
+            const reg = readJson<Registry>(regFile(), { projects: {} })
+            const rec: ProjectRec = {
+              slug,
+              name: base,
+              kind: projectKind(files),
+              dir: `f/${slug}`,
+              src,
+              bytes,
+              count: files.length,
+              ts,
+              at,
+              counts,
+              files,
+            }
+            reg.projects[slug] = rec
+            writeJson(regFile(), reg)
+            rebuildData(appDir(), reg)
+
+            const up = await ensureServer(r, config.port, config.idleMinutes)
+            const ip = lanIPv4()
+            const url = `http://${ip ?? '127.0.0.1'}:${config.port}`
+            const kindLabel: Record<string, string> = {
+              web: '网页', image: '图片', video: '视频', doc: '文档', asset: '产物', file: '文件',
+            }
+            return [
+              `已发送 ${base}（${kindLabel[rec.kind] ?? rec.kind}）`,
+              `文件：${files.length} 个 · ${(bytes / 1024).toFixed(0)} KB`,
+              `项目页：${url}/proof/home-v1/project.html?p=${slug}`,
+              `直接打开：${url}/${rec.dir}/`,
+              `服务：${up ? '运行中' : '启动失败'}`,
+            ].join('\n')
+          },
+        }),
+      ),
+    '@dsh-external/dsh-proof: proof_send',
+  )
+
+  ctx.effect(
+    () =>
+      ctx.tools.register(
+        defineTool({
+          name: 'proof_remove',
+          description: '删除一个已发送到 iPad 的项目。',
+          parameters: {
+            project: { type: 'string', required: true, description: '项目 slug（见项目页地址 ?p=）' },
+          },
+          output: {
+            schema: { type: 'string' },
+            render: (_a: unknown, v: unknown) => [{ type: 'text', text: String(v) }],
+          },
+          async execute(args: { project: string }) {
+            const r = requireRoot()
+            const reg = readJson<Registry>(regFile(), { projects: {} })
+            const slug = slugify(args.project)
+            const rec = reg.projects[slug]
+            if (!rec) throw new Error(`没有这个项目：${args.project}`)
+            fs.rmSync(path.join(r, rec.dir), { recursive: true, force: true })
+            delete reg.projects[slug]
+            writeJson(regFile(), reg)
+            rebuildData(appDir(), reg)
+            return `已删除 ${rec.name}（释放 ${(rec.bytes / 1024).toFixed(0)} KB）`
+          },
+        }),
+      ),
+    '@dsh-external/dsh-proof: proof_remove',
+  )
+
+  ctx.effect(
+    () =>
+      ctx.tools.register(
+        defineTool({
+          name: 'proof_status',
+          description: '查看 PROOF 服务状态、局域网地址与已发送项目。',
+          parameters: { verbose: { type: 'boolean', description: '附带详情' } },
           output: {
             schema: { type: 'string' },
             render: (_a: unknown, v: unknown) => [{ type: 'text', text: String(v) }],
@@ -227,27 +335,20 @@ export function apply(ctx: Context, config: Config): void {
             const ip = lanIPv4()
             const running = await probe('127.0.0.1', config.port)
             const lan = ip ? `http://${ip}:${config.port}/` : '（未找到局域网地址）'
-            const appDir = config.appDir || path.join(root, 'proof', 'home-v1')
-            const dataRec = readJson<{ updated?: string; projects?: unknown[] }>(
-              path.join(appDir, 'data.json'),
-              {},
-            )
-            const items = Array.isArray(dataRec.projects) ? dataRec.projects.length : null
+            const reg = readJson<Registry>(regFile(), { projects: {} })
+            const list = Object.values(reg.projects)
             if (!args.verbose) {
               return running
-                ? `PROOF 服务运行中 · ${lan}`
-                : `PROOF 服务未运行（端口 ${config.port} 无监听）`
+                ? `PROOF 运行中 · ${lan} · ${list.length} 个项目`
+                : `PROOF 未运行（端口 ${config.port} 无监听）`
             }
-            const reg = readJson<Registry>(path.join(root, '.proof', 'versions.json'), { projects: {} })
-            const projects = Object.keys(reg.projects).length
+            const total = list.reduce((s, p) => s + p.bytes, 0)
             return [
               `状态：${running ? '运行中' : '未运行'}`,
-              `端口：${config.port}`,
               `局域网：${lan}`,
               `投放目录：${root || '（未配置）'}`,
-              `首页项目数：${items === null ? '—' : String(items)}`,
-              `数据更新：${dataRec.updated ?? '—'}`,
-              `已发布项目：${projects}`,
+              `项目：${list.length} 个 · ${(total / 1048576).toFixed(2)} MB`,
+              `首页：${lan}proof/home-v1/`,
               `空闲停止：${config.idleMinutes} 分钟`,
             ].join('\n')
           },
@@ -260,77 +361,9 @@ export function apply(ctx: Context, config: Config): void {
     () =>
       ctx.tools.register(
         defineTool({
-          name: 'proof_publish',
-          description: '把目录发布成新版本并送到 iPad（自动起服务、写收件箱）。',
-          parameters: {
-            source: { type: 'string', required: true, description: '要发布的目录或文件绝对路径' },
-            project: { type: 'string', description: '项目名（默认取目录名）' },
-            note: { type: 'string', description: '这一版的说明，一句话' },
-            auto: { type: 'boolean', description: 'iPad 是否自动打开（默认是）' },
-          },
-          output: {
-            schema: { type: 'string' },
-            render: (_a: unknown, v: unknown) => [{ type: 'text', text: String(v) }],
-          },
-          async execute(args: { source: string; project?: string; note?: string; auto?: boolean }) {
-            const r = requireRoot()
-            const src = path.resolve(args.source)
-            if (!fs.existsSync(src)) throw new Error(`源路径不存在：${src}`)
-
-            const slug = slugify(args.project || path.basename(src))
-            const regFile = path.join(r, '.proof', 'versions.json')
-            const reg = readJson<Registry>(regFile, { projects: {} })
-            const list = reg.projects[slug] ?? []
-            const v = list.reduce((m, x) => Math.max(m, x.v), 0) + 1
-
-            const rel = `p/${slug}/v${v}`
-            const destDir = path.join(r, rel)
-            fs.rmSync(destDir, { recursive: true, force: true })
-
-            const stat = fs.statSync(src)
-            if (stat.isDirectory()) copyTree(src, destDir)
-            else {
-              fs.mkdirSync(destDir, { recursive: true })
-              fs.copyFileSync(src, path.join(destDir, path.basename(src)))
-            }
-
-            const bytes = dirBytes(destDir)
-            const ts = Math.round(Date.now() / 1000)
-            const at = new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
-            const rec: VersionRec = { v, ts, at, note: args.note ?? '', dir: rel, src, bytes }
-            list.push(rec)
-            reg.projects[slug] = list
-            writeJson(regFile, reg)
-
-            const appDir = config.appDir || path.join(r, 'proof', 'home-v1')
-            rebuildData(appDir, reg)
-
-            const up = await ensureServer(r, config.port, config.idleMinutes)
-            const ip = lanIPv4()
-            const base = ip ? `http://${ip}:${config.port}` : `http://127.0.0.1:${config.port}`
-
-            return [
-              `已发布 ${slug} v${v}`,
-              `版本目录：${rel}/（${(bytes / 1024).toFixed(0)} KB）`,
-              `版本地址：${base}/${rel}/`,
-              `首页：${base}/proof/home-v1/（刷新即见 v${v}）`,
-              `服务：${up ? '运行中' : '启动失败（端口可能被占用）'}`,
-            ].join('\n')
-          },
-        }),
-      ),
-    '@dsh-external/dsh-proof: proof_publish',
-  )
-
-  ctx.effect(
-    () =>
-      ctx.tools.register(
-        defineTool({
           name: 'proof_serve',
-          description: '手动启停 PROOF 静态服务（发布时会自动启动，一般不用调）。',
-          parameters: {
-            action: { type: 'string', required: true, description: 'start | stop | status' },
-          },
+          description: '手动启停 PROOF 静态服务。',
+          parameters: { action: { type: 'string', required: true, description: 'start | stop | status' } },
           output: {
             schema: { type: 'string' },
             render: (_a: unknown, v: unknown) => [{ type: 'text', text: String(v) }],
@@ -339,18 +372,19 @@ export function apply(ctx: Context, config: Config): void {
             const r = requireRoot()
             const act = (args.action || '').toLowerCase()
             if (act === 'stop') {
-              const ok = stopServer(r)
+              stopServer(r)
               await new Promise((res) => setTimeout(res, 300))
-              const still = await probe('127.0.0.1', config.port)
-              return ok || !still ? '服务已停止' : '停止失败（进程可能不是本插件启动的）'
+              return (await probe('127.0.0.1', config.port)) ? '停止失败' : '服务已停止'
             }
             if (act === 'status') {
-              const running = await probe('127.0.0.1', config.port)
-              return running ? `服务运行中（:${config.port}）` : `服务未运行（:${config.port}）`
+              return (await probe('127.0.0.1', config.port))
+                ? `服务运行中（:${config.port}）`
+                : `服务未运行（:${config.port}）`
             }
-            if (act !== 'start') throw new Error(`未知动作：${args.action}（start | stop | status）`)
-            const ok = await ensureServer(r, config.port, config.idleMinutes)
-            return ok ? `服务已启动（:${config.port}）` : '启动失败（端口可能被占用）'
+            if (act !== 'start') throw new Error(`未知动作：${args.action}`)
+            return (await ensureServer(r, config.port, config.idleMinutes))
+              ? `服务已启动（:${config.port}）`
+              : '启动失败（端口可能被占用）'
           },
         }),
       ),

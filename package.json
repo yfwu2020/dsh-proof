@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-proof",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "PROOF —— 把本地原型发布到同一局域网内的 iPad，并在设备上自动打开",
   "private": true,
   "type": "module",
