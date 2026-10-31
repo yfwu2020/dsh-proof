@@ -187,8 +187,60 @@ function projectKind(files: FileRec[]): Kind {
   return files.length === 1 ? files[0].kind : 'file'
 }
 
+interface BrokenInfo {
+  slug: string
+  name: string
+  missing: string[]
+}
+
+/** 扫一遍 link 项目的软链接，返回失效的项目 */
+function checkLinks(root: string, reg: Registry): BrokenInfo[] {
+  const out: BrokenInfo[] = []
+  for (const p of Object.values(reg.projects)) {
+    if (p.mode !== 'link') continue
+    const dir = path.join(root, p.dir)
+    const missing: string[] = []
+    let entries: string[] = []
+    try {
+      entries = fs.readdirSync(dir)
+    } catch {
+      out.push({ slug: p.slug, name: p.name, missing: ['（项目目录不存在）'] })
+      continue
+    }
+    for (const e of entries) {
+      try {
+        fs.statSync(path.join(dir, e)) // 跟随链接，目标没了就抛
+      } catch {
+        missing.push(e)
+      }
+    }
+    if (missing.length) out.push({ slug: p.slug, name: p.name, missing })
+  }
+  return out
+}
+
+/** 把断链状态写回 data.json，界面据此显示「链接失效」 */
+function markBroken(root: string, broken: BrokenInfo[]): void {
+  const file = path.join(root, 'data.json')
+  const data = readJson<{ projects?: Array<Record<string, unknown>> } | null>(file, null)
+  if (!data || !Array.isArray(data.projects)) return
+  const set = new Set(broken.map((b) => b.slug))
+  let changed = false
+  for (const proj of data.projects) {
+    const should = set.has(String(proj.slug))
+    if (Boolean(proj.broken) !== should) {
+      proj.broken = should
+      changed = true
+    }
+  }
+  if (changed) writeJson(file, data)
+}
+
 function rebuildData(dir: string, reg: Registry): void {
-  const projects = Object.values(reg.projects).sort((a, b) => b.ts - a.ts)
+  const brokenSet = new Set(checkLinks(dir, reg).map((b) => b.slug))
+  const projects = Object.values(reg.projects)
+    .sort((a, b) => b.ts - a.ts)
+    .map((p) => ({ ...p, broken: brokenSet.has(p.slug) }))
   const totals: Record<string, number> = {}
   for (const p of projects) for (const k of Object.keys(p.counts)) totals[k] = (totals[k] ?? 0) + p.counts[k]
   writeJson(path.join(dir, 'data.json'), {
@@ -389,10 +441,13 @@ export function apply(ctx: Context, config: Config): void {
             const lan = ip ? `http://${ip}:${config.port}/` : '（未找到局域网地址）'
             const reg = readJson<Registry>(regFile(), { projects: {} })
             const list = Object.values(reg.projects)
+            const broken = checkLinks(root, reg)
+            markBroken(root, broken)
+            const brokenNote = broken.length ? ` · ${broken.length} 个链接失效` : ''
             if (!args.verbose) {
               return running
-                ? `PROOF 运行中 · ${lan} · ${list.length} 个项目`
-                : `PROOF 未运行（端口 ${config.port} 无监听）`
+                ? `PROOF 运行中 · ${lan} · ${list.length} 个项目${brokenNote}`
+                : `PROOF 未运行（端口 ${config.port} 无监听）${brokenNote}`
             }
             const total = list.reduce((s, p) => s + p.bytes, 0)
             return [
@@ -403,6 +458,9 @@ export function apply(ctx: Context, config: Config): void {
               `项目：${list.length} 个 · ${(total / 1048576).toFixed(2)} MB`,
               `首页：${lan}proof/home-v1/`,
               `空闲停止：${config.idleMinutes} 分钟`,
+              broken.length
+                ? '断链：' + broken.map((b) => `${b.slug}（缺 ${b.missing.slice(0, 3).join(', ')}${b.missing.length > 3 ? ' …' : ''}）`).join('；')
+                : '断链：无',
             ].join('\n')
           },
         }),
