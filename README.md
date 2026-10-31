@@ -12,17 +12,29 @@ v0.3.0 起改为**文件管理模式**：**一次发送 = 一个项目，不留�
 | 工具 | 作用 |
 |---|---|
 | `proof_status` | 服务状态、局域网地址、收件箱条目、已发布项目数 |
-| `proof_send` | 发送目录/文件到 iPad（同名覆盖），自动起服务 |
+| `proof_send` | 发送目录/文件到 iPad（同名覆盖）。`mode: "link"`（默认）建软链接不复制；`mode: "copy"` 真复制一份 |
 | `proof_remove` | 删除一个已发送的项目 |
 | `proof_serve` | 手动 `start` / `stop` / `status`（发布时会自动启动） |
 
-发布语义：
+发送语义：
 
 ```
-源目录  →  <root>/p/<slug>/v<N>/         （复制，跳过 node_modules/.git）
-        →  <root>/.proof/versions.json   （版本登记，内部状态）
-        →  <root>/proof/home-v1/data.json（首页数据，页面直接读）
+mode=link（默认）   <root>/f/<slug>/ 里逐条建软链接 → 源码，不复制，改完刷新即见
+mode=copy           <root>/f/<slug>/ 是真复制（跳过 node_modules/.git）
+        ↓
+<root>/data.json    项目清单与文件树（界面读它）
 ```
+
+**界面不再复制进投放目录。** 服务器按路径映射：
+
+| 路径 | 来自 |
+|---|---|
+| `/` | 302 → `/proof/home-v1/` |
+| `/proof/home-v1/*` | 包内 `ui/*`（随插件升级） |
+| `/data.json` | `<root>/data.json` |
+| `/f/*` | `<root>/f/*` |
+
+`node_modules` / `.git` / `.proof` 一律 404 —— 软链接不会把源码目录暴露出去。
 
 访问入口：
 
@@ -49,18 +61,24 @@ npm run typecheck
 **未配置 `root` 时默认落在 `~/.proof`** —— 每个用户各自的 home 下，装上就能用：
 
 ```
-~/.proof/
-├── f/<项目>/                 发送过来的文件
-├── proof/home-v1/            界面（首次运行从包内 ui/ 自动释放）
+~/.proof/                     ← 只有用户数据
+├── f/<项目>/                 软链接或副本
+├── data.json                 项目清单（界面读它）
 └── .proof/
     ├── items.json            项目登记
     └── server.json           服务进程状态
+
+dsh-proof/                    ← 只有一个地方放代码和界面
+├── src/index.ts
+├── server.py
+├── ui/                      界面（不再复制到投放目录）
+└── package.json
 ```
 
 `cordis.patch.yml` 里**不再写任何绝对路径**；要换位置再显式填 `root`。
 
-开发这台机器上，`~/.proof/proof/home-v1` 是一个指向源码目录的软链接 —— 改源码刷新即生效，
-打包时 `scripts/build.sh` 会把源码里的界面同步成 `ui/` 一起发出去。
+界面就在包里的 `ui/`，服务器直接映射过去 —— 改 `ui/` 里的文件，iPad 刷新即生效，
+不需要构建、不需要复制。
 
 ## 安装位置
 

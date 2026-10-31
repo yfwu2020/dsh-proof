@@ -72,15 +72,6 @@ if [ -n "$STD_SCHEMA" ]; then
   " "$STD_SCHEMA/node_modules/@standard-schema/spec"
 fi
 
-# 同步界面：开发时界面活在 ../../proof/workspace/home-v1，打包时复制进 ui/
-UI_SRC="$(cd "$ROOT/.." && pwd)/proof/workspace/home-v1"
-if [ -d "$UI_SRC" ]; then
-  rm -rf "$ROOT/ui"
-  mkdir -p "$ROOT/ui"
-  cp "$UI_SRC"/*.html "$UI_SRC"/*.css "$UI_SRC"/*.js "$ROOT/ui/" 2>/dev/null || true
-  echo "=== UI synced from $UI_SRC ==="
-fi
-
 echo "=== Compiling src → lib ==="
 "$TSC" -p tsconfig.json
 echo "=== Build complete ==="
