@@ -16,6 +16,7 @@ import os
 import sys
 import time
 import threading
+import json
 import urllib.parse
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
@@ -75,12 +76,48 @@ class Handler(SimpleHTTPRequestHandler):
 
     def do_GET(self):  # noqa: N802
         touch_activity()
-        if self.path in ("/", "/index.html"):
+        path = urllib.parse.urlsplit(self.path).path
+        if path in ("/", "/index.html"):
             self.send_response(302)
             self.send_header("Location", UI_PREFIX + "/")
             self.end_headers()
             return
+        if path == "/data.json":
+            self.send_data()
+            return
         super().do_GET()
+
+    def send_data(self):
+        """实时重算断链：每次请求都反映此刻的真实状态，不依赖有人调用工具。"""
+        try:
+            with open(os.path.join(ROOT, "data.json"), encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            data = {"updated": None, "totals": {}, "projects": []}
+        for proj in data.get("projects", []):
+            if proj.get("mode") != "link":
+                proj["broken"] = False
+                continue
+            d = os.path.join(ROOT, proj.get("dir", ""))
+            missing = []
+            try:
+                for entry in os.listdir(d):
+                    if not os.path.exists(os.path.join(d, entry)):  # 跟随链接
+                        missing.append(entry)
+            except OSError:
+                missing = ["(项目目录不存在)"]
+            proj["broken"] = bool(missing)
+            if missing:
+                proj["missing"] = missing[:5]
+            else:
+                proj.pop("missing", None)
+        body = json.dumps(data, ensure_ascii=False).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def do_HEAD(self):  # noqa: N802
         touch_activity()
