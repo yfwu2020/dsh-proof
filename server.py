@@ -26,7 +26,23 @@ ACTIVITY = sys.argv[4] if len(sys.argv) > 4 else ""
 UI_DIR = os.path.abspath(sys.argv[5]) if len(sys.argv) > 5 else os.path.join(ROOT, "proof", "home-v1")
 
 UI_PREFIX = "/proof/home-v1"
-BLOCK = {"node_modules", ".git", ".proof", ".DS_Store"}
+
+# 护城墙：软链接模式下 /f/ 指向源码目录，这些一律 404
+BLOCK_DIRS = {"node_modules", "__pycache__", "venv", ".venv", ".next", "dist_node"}
+BLOCK_EXTS = (".pem", ".key", ".p12", ".pfx", ".keystore", ".env", ".npmrc", ".netrc")
+
+
+def blocked(path: str) -> bool:
+    for seg in path.split("/"):
+        if not seg:
+            continue
+        if seg in BLOCK_DIRS:
+            return True
+        if seg.startswith("."):          # 任何点文件/点目录：.env .git .npmrc .ssh …
+            return True
+        if seg.lower().endswith(BLOCK_EXTS):
+            return True
+    return False
 
 
 def touch_activity() -> None:
@@ -53,7 +69,7 @@ class Handler(SimpleHTTPRequestHandler):
             if not full.startswith(os.path.normpath(UI_DIR)):
                 return os.path.join(ROOT, "__denied__")
             return full
-        if any(seg in BLOCK for seg in p.split("/")):
+        if blocked(p):
             return os.path.join(ROOT, "__denied__")
         return super().translate_path(path)
 

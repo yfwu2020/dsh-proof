@@ -34,7 +34,13 @@ mode=copy           <root>/f/<slug>/ 是真复制（跳过 node_modules/.git）
 | `/data.json` | `<root>/data.json` |
 | `/f/*` | `<root>/f/*` |
 
-`node_modules` / `.git` / `.proof` 一律 404 —— 软链接不会把源码目录暴露出去。
+**护城墙**（软链接模式的必要配套）：以下一律 404，源码目录不会被暴露出去。
+
+- 任何**点文件/点目录**：`.env`、`.npmrc`、`.git`、`.ssh`、`.vscode` …
+- 依赖与缓存目录：`node_modules`、`__pycache__`、`venv`、`.venv`、`.next`
+- 密钥类扩展名：`.pem`、`.key`、`.p12`、`.pfx`、`.keystore`
+
+0.5.1 修复：此前只拦了 `node_modules`/`.git`，`.env` 和 `.npmrc` 能被直接下载（实测 200 + 明文内容），已封堵。
 
 访问入口：
 
