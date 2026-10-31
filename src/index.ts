@@ -39,6 +39,31 @@ export const Config = z.object({
 
 const SKIP = new Set(['node_modules', '.git', '.DS_Store', '.proof'])
 
+/** 未配置 root 时的默认投放目录（每个用户各自的 home 下） */
+function defaultRoot(): string {
+  return path.join(os.homedir(), '.proof')
+}
+
+/** 随包发布的界面目录 */
+function packagedUi(): string {
+  return fileURLToPath(new URL('../ui', import.meta.url))
+}
+
+/** 首次运行时把界面释放到投放目录；已存在则不覆盖（允许用户自己改） */
+function seedUi(appDir: string): void {
+  if (fs.existsSync(path.join(appDir, 'index.html'))) return
+  const src = packagedUi()
+  if (!fs.existsSync(src)) return
+  copyTree(src, appDir)
+}
+
+function ensureData(appDir: string): void {
+  const f = path.join(appDir, 'data.json')
+  if (!fs.existsSync(f)) {
+    writeJson(f, { updated: null, totals: {}, projects: [] })
+  }
+}
+
 type Kind = 'web' | 'image' | 'video' | 'doc' | 'asset' | 'file'
 
 interface FileRec {
@@ -207,9 +232,17 @@ function stopServer(root: string): boolean {
 }
 
 export function apply(ctx: Context, config: Config): void {
-  const root = config.root
+  const root = config.root ? path.resolve(config.root) : defaultRoot()
   const regFile = () => path.join(root, '.proof', 'items.json')
-  const appDir = () => config.appDir || path.join(root, 'proof', 'home-v1')
+  const appDir = () => (config.appDir ? path.resolve(config.appDir) : path.join(root, 'proof', 'home-v1'))
+
+  try {
+    fs.mkdirSync(root, { recursive: true })
+    seedUi(appDir())
+    ensureData(appDir())
+  } catch {
+    /* 首次运行失败不该阻塞插件加载，工具调用时会再报 */
+  }
   const requireRoot = (): string => {
     if (!root) throw new Error('插件未配置投放目录（config.root）')
     return root
@@ -346,7 +379,8 @@ export function apply(ctx: Context, config: Config): void {
             return [
               `状态：${running ? '运行中' : '未运行'}`,
               `局域网：${lan}`,
-              `投放目录：${root || '（未配置）'}`,
+              `投放目录：${root}${config.root ? '' : '（默认）'}`,
+              `界面目录：${appDir()}`,
               `项目：${list.length} 个 · ${(total / 1048576).toFixed(2)} MB`,
               `首页：${lan}proof/home-v1/`,
               `空闲停止：${config.idleMinutes} 分钟`,

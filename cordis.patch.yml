@@ -10,7 +10,7 @@
       name: '@dsh-external/dsh-proof'
       config:
         port: 8321
-        # 投放目录：静态服务 --directory 指向的路径（proof_status 会读它统计条目）
-        root: /Users/yfwu2025/Desktop/Code/DSH/Plugins/ipad-demo
         # 空闲多少分钟后自动停服务
         idleMinutes: 60
+        # root 留空 = 用 ~/.proof（每个用户各自的 home 下）
+        # 想换位置再填绝对路径，例如 root: /Volumes/Data/proof

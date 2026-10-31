@@ -44,6 +44,24 @@ npm run typecheck
 
 在 DSH 中调用 `proof_status {"verbose":true}`。成功的验收条件是插件处于 active、工具已注册，而且实际调用返回服务状态。服务未启动时报告“未运行”是正常结果；该工具不会启动静态服务器。
 
+## 安装位置（0.4.0）
+
+**未配置 `root` 时默认落在 `~/.proof`** —— 每个用户各自的 home 下，装上就能用：
+
+```
+~/.proof/
+├── f/<项目>/                 发送过来的文件
+├── proof/home-v1/            界面（首次运行从包内 ui/ 自动释放）
+└── .proof/
+    ├── items.json            项目登记
+    └── server.json           服务进程状态
+```
+
+`cordis.patch.yml` 里**不再写任何绝对路径**；要换位置再显式填 `root`。
+
+开发这台机器上，`~/.proof/proof/home-v1` 是一个指向源码目录的软链接 —— 改源码刷新即生效，
+打包时 `scripts/build.sh` 会把源码里的界面同步成 `ui/` 一起发出去。
+
 ## 安装位置
 
 安装必须针对当前运行的 profile。桌面版使用 `~/.dsh/profiles/desktop`，旧 `web` profile 中的登记不会让桌面版加载插件。注入器修复后会从运行时 `profileContext.dir` 选择目录，显式指定的目录仍优先。
