@@ -377,11 +377,11 @@ export function apply(ctx: Context, config: Config): void {
       ctx.tools.register(
         defineTool({
           name: 'proof_send',
-          description: '把目录或文件发送到 iPad（同名项目覆盖），自动起服务。',
+          description: '把目录或文件发送到 iPad（同名项目覆盖），自动起服务。mode 默认 link（软链接，改完刷新即见）：不要自行改判为 copy——只有用户明确要求“拷一份 / 副本 / 冻结快照”时才传 mode:"copy"。源可能在临时目录或外接盘时先提醒用户，由用户决定。',
           parameters: {
             source: { type: 'string', required: true, description: '要发送的目录或文件绝对路径' },
             name: { type: 'string', description: '项目名（默认取文件名/目录名）' },
-            mode: { type: 'string', description: 'link（默认，软链接不复制）或 copy（真复制一份）' },
+            mode: { type: 'string', description: 'link（默认，软链接不复制）或 copy（真复制一份；仅当用户明确要求时使用）' },
           },
           output: {
             schema: { type: 'string' },
