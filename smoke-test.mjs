@@ -127,6 +127,10 @@ test('发送目录 → 服务可用 → 实时大小 → 护城墙 → 删除', 
   assert.equal((await fetch(`${base}/f/demo/.env`)).status, 404);
   assert.equal((await fetch(`${base}/f/demo/node_modules/x`)).status, 404);
 
+  // copy 模式不抄点文件/构建缓存：副本里只该有正常内容
+  assert.match(await tools.get('proof_send').execute({ source: src, name: 'demo', mode: 'copy' }), /副本/);
+  assert.deepEqual(readdirSync(join(root, 'f', 'demo')).sort(), ['index.html', 'style.css']);
+
   const verbose = await tools.get('proof_status').execute({ verbose: true });
   assert.match(verbose, /状态：运行中/);
   assert.match(verbose, /项目：1 个/);
