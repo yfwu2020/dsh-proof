@@ -267,10 +267,20 @@ async function ensureServer(root: string, port: number, idleMinutes: number, uiD
     stdio: 'ignore',
   })
   child.unref()
-  if (child.pid) writeJson(path.join(sd, 'server.json'), { pid: child.pid, port, startedAt: new Date().toISOString() })
+  // server.json 只在确认起来之后再写：启动失败不留指向死进程的状态文件
   for (let i = 0; i < 20; i++) {
     await new Promise((r) => setTimeout(r, 150))
-    if (await probe('127.0.0.1', port)) return true
+    if (await probe('127.0.0.1', port)) {
+      if (child.pid) writeJson(path.join(sd, 'server.json'), { pid: child.pid, port, startedAt: new Date().toISOString() })
+      return true
+    }
+  }
+  if (child.pid) {
+    try {
+      process.kill(child.pid, 'SIGTERM')
+    } catch {
+      /* 已经退出 */
+    }
   }
   return false
 }
@@ -291,6 +301,27 @@ function stopServer(root: string): boolean {
 /** 端口没监听时，清掉上一次留下的 server.json（死 PID 不该一直挂在状态文件里） */
 function cleanServerState(root: string): void {
   fs.rmSync(path.join(root, '.proof', 'server.json'), { force: true })
+}
+
+/** 发包中途崩溃会留下 `.tmp-<slug>-<pid>` 暂存目录：超过 1 小时没人动的按垃圾清掉 */
+function sweepStaging(root: string): void {
+  const dir = path.join(root, 'f')
+  let entries: string[]
+  try {
+    entries = fs.readdirSync(dir)
+  } catch {
+    return
+  }
+  const cutoff = Date.now() - 60 * 60 * 1000
+  for (const name of entries) {
+    if (!name.startsWith('.tmp-')) continue
+    const full = path.join(dir, name)
+    try {
+      if (fs.statSync(full).mtimeMs < cutoff) fs.rmSync(full, { recursive: true, force: true })
+    } catch {
+      /* 已经被清掉了 */
+    }
+  }
 }
 
 /**
@@ -355,68 +386,73 @@ export function apply(ctx: Context, config: Config): void {
             const base = args.name || path.basename(src)
             const slug = slugify(base)
             const destDir = path.join(r, 'f', slug)
-            fs.rmSync(destDir, { recursive: true, force: true })
+            // 先在隐藏的暂存目录里搭好，成功后再一步换上：中途失败不会留下半个项目，
+            // 也不会先把上一次的成品删掉（改名/重发时旧项目仍然完整）。
+            const staging = path.join(r, 'f', `.tmp-${slug}-${process.pid}`)
+            sweepStaging(r)
+            fs.rmSync(staging, { recursive: true, force: true })
 
             const mode = (args.mode || 'link').toLowerCase() === 'copy' ? 'copy' : 'link'
             const st = fs.statSync(src)
-            if (mode === 'copy') {
-              if (st.isDirectory()) copyTree(src, destDir)
-              else {
-                fs.mkdirSync(destDir, { recursive: true })
-                fs.copyFileSync(src, path.join(destDir, path.basename(src)))
-              }
-            } else {
-              // 软链接：只指路，不搬家。目录里逐条建链接（跳过 node_modules/.git）
-              fs.mkdirSync(destDir, { recursive: true })
-              if (st.isDirectory()) {
+            try {
+              fs.mkdirSync(staging, { recursive: true })
+              if (mode === 'copy') {
+                if (st.isDirectory()) copyTree(src, staging)
+                else fs.copyFileSync(src, path.join(staging, path.basename(src)))
+              } else if (st.isDirectory()) {
+                // 软链接：只指路，不搬家。目录里逐条建链接（跳过 node_modules/.git）
                 for (const entry of fs.readdirSync(src)) {
                   if (SKIP.has(entry)) continue
-                  fs.symlinkSync(path.join(src, entry), path.join(destDir, entry))
+                  fs.symlinkSync(path.join(src, entry), path.join(staging, entry))
                 }
               } else {
-                fs.symlinkSync(src, path.join(destDir, path.basename(src)))
+                fs.symlinkSync(src, path.join(staging, path.basename(src)))
               }
-            }
+              const files = collectFiles(staging)
+              const counts: Record<string, number> = {}
+              for (const f of files) counts[f.kind] = (counts[f.kind] ?? 0) + 1
+              const bytes = files.reduce((s, f) => s + f.bytes, 0)
+              const ts = Math.round(Date.now() / 1000)
+              const at = new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
 
-            const files = collectFiles(destDir)
-            const counts: Record<string, number> = {}
-            for (const f of files) counts[f.kind] = (counts[f.kind] ?? 0) + 1
-            const bytes = files.reduce((s, f) => s + f.bytes, 0)
-            const ts = Math.round(Date.now() / 1000)
-            const at = new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-')
+              const reg = readJson<Registry>(regFile(), { projects: {} })
+              const rec: ProjectRec = {
+                slug,
+                name: base,
+                kind: projectKind(files),
+                dir: `f/${slug}`,
+                src,
+                bytes,
+                count: files.length,
+                ts,
+                at,
+                counts,
+                files,
+                mode,
+              }
+              fs.rmSync(destDir, { recursive: true, force: true })
+              fs.renameSync(staging, destDir)
+              reg.projects[slug] = rec
+              writeJson(regFile(), reg)
+              rebuildData(root, reg)
 
-            const reg = readJson<Registry>(regFile(), { projects: {} })
-            const rec: ProjectRec = {
-              slug,
-              name: base,
-              kind: projectKind(files),
-              dir: `f/${slug}`,
-              src,
-              bytes,
-              count: files.length,
-              ts,
-              at,
-              counts,
-              files,
-              mode,
+              const up = await ensureServer(r, config.port, config.idleMinutes, uiDir)
+              const ip = lanIPv4()
+              const url = `http://${ip ?? '127.0.0.1'}:${config.port}`
+              const kindLabel: Record<string, string> = {
+                web: '网页', image: '图片', video: '视频', doc: '文档', asset: '产物', file: '文件',
+              }
+              return [
+                `已发送 ${base}（${kindLabel[rec.kind] ?? rec.kind} · ${mode === 'link' ? '软链接' : '副本'}）`,
+                `文件：${files.length} 个 · ${(bytes / 1024).toFixed(0)} KB`,
+                `项目页：${url}/proof/home-v1/project.html?p=${slug}`,
+                `直接打开：${url}/${rec.dir}/`,
+                `服务：${up ? '运行中' : '启动失败'}`,
+              ].join('\n')
+            } finally {
+              // 成功路径已经 rename 走了，这里只会清掉失败留下的暂存目录
+              fs.rmSync(staging, { recursive: true, force: true })
             }
-            reg.projects[slug] = rec
-            writeJson(regFile(), reg)
-            rebuildData(root, reg)
-
-            const up = await ensureServer(r, config.port, config.idleMinutes, uiDir)
-            const ip = lanIPv4()
-            const url = `http://${ip ?? '127.0.0.1'}:${config.port}`
-            const kindLabel: Record<string, string> = {
-              web: '网页', image: '图片', video: '视频', doc: '文档', asset: '产物', file: '文件',
-            }
-            return [
-              `已发送 ${base}（${kindLabel[rec.kind] ?? rec.kind} · ${mode === 'link' ? '软链接' : '副本'}）`,
-              `文件：${files.length} 个 · ${(bytes / 1024).toFixed(0)} KB`,
-              `项目页：${url}/proof/home-v1/project.html?p=${slug}`,
-              `直接打开：${url}/${rec.dir}/`,
-              `服务：${up ? '运行中' : '启动失败'}`,
-            ].join('\n')
           },
         }),
       ),
