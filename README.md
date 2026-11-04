@@ -21,7 +21,7 @@ v0.3.0 起是**文件管理模式**：**一次发送 = 一个项目，不留版�
 
 ```
 mode=link（默认）   <root>/f/<slug>/ 里逐条建软链接 → 源码，不复制，改完刷新即见
-mode=copy           <root>/f/<slug>/ 是真复制（跳过 node_modules/.git）
+mode=copy           <root>/f/<slug>/ 是真复制（跳过依赖/构建缓存/点文件/密钥，见下）
         ↓
 <root>/data.json    项目清单与文件树（界面读它）
 ```
@@ -55,6 +55,8 @@ link 项目里放的是软链接，所以 `items.json` 里记的大小只是**�
 - 密钥类扩展名：`.pem`、`.key`、`.p12`、`.pfx`、`.keystore`
 
 （0.5.1 起：此前只拦了 `node_modules`/`.git`，`.env`、`.npmrc` 能被直接下载，已封堵。）
+
+发送时同样跳过这些，不让它们进投放目录：`node_modules`、`__pycache__`、`venv`、`.venv`、`.next`、`dist_node`、任何点开头的条目、`.pem/.key/.p12/.pfx/.keystore`。copy 模式因此不会把 `.env` 或构建缓存真抄一份进 `f/`；`dist/` 这类**构建产物是正常内容，照发**。
 
 ### 不留垃圾（0.7.5）
 
