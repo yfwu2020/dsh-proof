@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>PROOF · 项目</title>
+<link rel="stylesheet" href="app.css">
+<script>(function(){try{var q=new URLSearchParams(location.search).get("theme");var t=q||localStorage.getItem("pocket-theme");if(!t)t=(window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";document.documentElement.setAttribute("data-theme",t);if(q)localStorage.setItem("pocket-theme",q);}catch(e){}})();</script>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand"><b>PROOF</b><span>本地原型工作台</span></div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="projects.html">全部项目</a>
+      <a href="design.html">规范</a>
+    </nav>
+    <button class="themebtn" id="themeBtn" aria-label="切换主题"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+    <div class="status"><span class="dot"></span><span>本地 · :8321</span></div>
+  </div>
+
+  <div style="padding-top:18px">
+    <a class="back" href="projects.html"><svg class="ico inl" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg> 全部项目</a>
+  </div>
+
+  <section class="pagehead rise" style="padding-top:14px">
+    <div>
+      <div class="eyebrow" id="eyebrow">项目</div>
+      <h1 id="pname">—</h1>
+      <p class="lede" id="pdesc">—</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:18px" id="pchips"></div>
+    </div>
+  </section>
+
+  <div id="banner"></div>
+
+  <div class="sec-head" style="margin-top:8px">
+    <h3>最近更新</h3>
+    <span id="recentMeta" style="font-family:var(--mono);font-size:11px;color:var(--muted)"></span>
+  </div>
+  <div class="grid grid-3" id="recentCard"></div>
+
+  <div class="sec-head" style="margin-top:30px">
+    <h3 id="allTitle">全部文件</h3>
+    <button class="morebtn" id="allToggle">展开</button>
+  </div>
+  <div id="allBox" style="display:none">
+    <div class="filters" id="kinds" style="margin-bottom:12px"></div>
+    <div class="files" id="allList"></div>
+  </div>
+
+  <div class="panel" style="margin-top:22px">
+    <div class="k">来源</div>
+    <div class="kv"><span>源路径</span><b id="src">—</b></div>
+    <div class="kv"><span>存放位置</span><b id="dest">—</b></div>
+    <div class="kv"><span>入口文件</span><b id="entry">—</b></div>
+  </div>
+
+  <div class="foot">
+    <div>打开地址 <code id="addr">—</code><br>
+      同名再发一次会覆盖这个项目。</div>
+    <div style="text-align:right">PROOF · 项目<br><span style="font-family:var(--mono);font-size:11px">home-v3</span></div>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+<script src="data.js"></script>
+<script>
+(async function () {
+  var data = await loadData();
+  var projects = data.projects || [];
+  var slug = new URLSearchParams(location.search).get('p');
+  var p = projects.filter(function (x) { return x.slug === slug; })[0] || projects[0];
+
+  function $(id) { return document.getElementById(id); }
+
+  if (!p) {
+    $('pname').textContent = '还没有项目';
+    $('pdesc').textContent = '在 Mac 上发送一个目录或文件。';
+    $('list').innerHTML = '<div class="empty">空的</div>';
+    return;
+  }
+
+  var entry = p.files.filter(function (f) { return /(^|\/)index\.html?$/i.test(f.p); })[0];
+  var totalFiles = p.files.length;
+  var kinds = Object.keys(p.counts || {}).sort(function (a, b) { return p.counts[b] - p.counts[a]; });
+
+  document.title = 'PROOF · ' + title(p.name);
+  $('eyebrow').textContent = '项目 · ' + p.slug;
+  $('pname').textContent = title(p.name);
+  $('pdesc').textContent = kindLabel(p.kind) + ' · ' + totalFiles + ' 个文件 · ' + fmtBytes(p.bytes);
+  $('pchips').innerHTML =
+    '<span class="chip ok">已收到</span>' +
+    '<span class="chip">' + kindLabel(p.kind) + '</span>' +
+    '<span class="chip">' + fmtAgo(p.ts) + '</span>' +
+    '<span class="chip">' + (p.mode === 'copy' ? '副本' : '软链接') + '</span>' +
+    (p.broken ? '<span class="chip acc">链接失效</span>' : '');
+
+  $('banner').innerHTML = p.broken
+    ? '<div class="banner failed"><div class="ic">!</div><div class="bt">' +
+      '<b>链接失效 · 源文件不在原位置</b>' +
+      '<div class="d">源码目录可能被移动或改名。重新发送同名项目即可重建链接。</div></div></div>'
+    : '<div class="banner ok"><div class="ic"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg></div>' +
+    '<div class="bt"><b>' + esc(title(p.name)) + '</b>' +
+    '<div class="d">' + esc(p.at || '') + ' 收到 · ' + totalFiles + ' 个文件 · ' + fmtBytes(p.bytes) + '</div></div></div>';
+
+  $('src').textContent = p.src || '—';
+  $('dest').textContent = '/' + p.dir + '/';
+  $('entry').textContent = entry ? entry.p : '（无 index.html）';
+  $('addr').textContent = location.origin + '/' + p.dir + '/';
+
+  var RECENT_N = 3;
+  var VISIBLE = ['web', 'image', 'video'];   // "能直接看的"
+  var expanded = new URLSearchParams(location.search).get('all') === '1';
+  var TOP_LEVEL = window.self === window.top;
+  var LIVE = new URLSearchParams(location.search).get('pv') !== '0' && TOP_LEVEL;
+  var activeKind = '';
+
+  function byTime(a, b) { return (b.mtime || 0) - (a.mtime || 0); }
+
+  function thumb(f, size) {
+    if (f.kind === 'image') {
+      return '<img src="' + entryHref(p, f.p) + '" alt="" loading="lazy">';
+    }
+    if (f.kind === 'web') {
+      if (LIVE) {
+        return '<span class="pv"><iframe loading="lazy" scrolling="no" tabindex="-1" ' +
+          'sandbox="allow-scripts allow-same-origin allow-forms allow-popups" ' +
+          'src="' + entryHref(p, f.p) + '"></iframe></span>';
+      }
+      return '<span class="miniwin"><span class="dots"><b></b><b></b><b></b></span>' +
+        '<span class="mb" style="width:72%"></span><span class="mb" style="width:46%"></span></span>';
+    }
+    return icon(f.kind, size || 20);
+  }
+
+  /* 卡片：最近更新用，带缩略图 */
+  function card(f) {
+    var when = f.mtime ? fmtAgo(Math.round(f.mtime / 1000)) : '';
+    return '<a class="fcard" href="' + entryHref(p, f.p) + '" target="_blank" rel="noopener">' +
+      '<div class="fthumb-big">' + thumb(f, 26) + '</div>' +
+      '<div class="fname">' + esc(f.p) + '</div>' +
+      '<div class="fmeta"><span>' + fmtBytes(f.bytes) + '</span><span>' + when + '</span></div>' +
+    '</a>';
+  }
+
+  /* 列表行：全部文件用 */
+  function row(f) {
+    var when = f.mtime ? fmtAgo(Math.round(f.mtime / 1000)) : '';
+    return '<a class="frow" href="' + entryHref(p, f.p) + '" target="_blank" rel="noopener">' +
+      '<span class="fthumb">' + thumb(f, 17) + '</span>' +
+      '<span class="fname">' + esc(f.p) + '<br><span style="color:var(--muted);font-size:10.5px">' +
+        kindLabel(f.kind) + ' · ' + when + '</span></span>' +
+      '<span class="fmeta">' + fmtBytes(f.bytes) + '</span>' +
+    '</a>';
+  }
+
+  function renderRecent() {
+    var all = p.files.slice().sort(byTime);
+    var viewable = all.filter(function (f) { return VISIBLE.indexOf(f.kind) >= 0; });
+    var top = viewable.slice(0, RECENT_N);
+    $('recentMeta').textContent = viewable.length
+      ? viewable.length + ' 个可预览'
+      : '没有可直接预览的文件';
+    $('recentCard').innerHTML = top.map(card).join('') ||
+      '<div class="empty" style="grid-column:1/-1">这个项目里没有网页、图片或视频</div>';
+  }
+
+  function renderAll() {
+    var all = p.files.slice().sort(byTime);
+    $('allTitle').textContent = '全部文件 · ' + all.length + ' 个';
+    $('allToggle').textContent = expanded ? '收起' : '展开';
+
+    if (!expanded) {
+      $('allBox').style.display = 'none';
+      return;
+    }
+    $('allBox').style.display = '';
+
+    // 筛选只管这个列表
+    var chips = '<button class="chip' + (activeKind ? '' : ' on') + '" data-k="">全部 ' + all.length + '</button>';
+    chips += kinds.map(function (k) {
+      return '<button class="chip' + (activeKind === k ? ' on' : '') + '" data-k="' + k + '">' +
+        icon(k, 13) + ' ' + kindLabel(k) + ' <span style="opacity:.6">' + p.counts[k] + '</span></button>';
+    }).join('');
+    $('kinds').innerHTML = chips;
+    Array.prototype.forEach.call(document.querySelectorAll('#kinds button'), function (b) {
+      b.style.cursor = 'pointer';
+      b.addEventListener('click', function () {
+        activeKind = b.getAttribute('data-k');
+        renderAll();
+      });
+    });
+
+    var list = all.filter(function (f) { return !activeKind || f.kind === activeKind; });
+    $('allList').innerHTML = list.map(row).join('') ||
+      '<div class="empty">这个分类下没有文件</div>';
+  }
+
+  $('allToggle').addEventListener('click', function () {
+    expanded = !expanded;
+    renderAll();
+  });
+
+  function fitFrames() {
+    Array.prototype.forEach.call(document.querySelectorAll('.pv'), function (box) {
+      var frame = box.querySelector('iframe');
+      if (!frame) return;
+      var w = box.clientWidth || 300;
+      var h = box.clientHeight || 84;
+      var base = 1200;
+      frame.style.width = base + 'px';
+      frame.style.height = Math.round(h * (base / w)) + 'px';
+      frame.style.transform = 'scale(' + (w / base) + ')';
+    });
+  }
+
+  renderRecent();
+  renderAll();
+  fitFrames();
+  requestAnimationFrame(fitFrames);
+  window.addEventListener('resize', fitFrames);
+  window.addEventListener('load', fitFrames);   // 图片/字体就位后再校正一次
+
+  try {
+    var u = new URL(location.href);
+    u.searchParams.set('p', p.slug);
+    history.replaceState(null, '', u);
+  } catch (e) {}
+})();
+</script>
+</body>
+</html>

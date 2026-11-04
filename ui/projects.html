@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>PROOF · 全部项目</title>
+<link rel="stylesheet" href="app.css">
+<script>(function(){try{var q=new URLSearchParams(location.search).get("theme");var t=q||localStorage.getItem("pocket-theme");if(!t)t=(window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";document.documentElement.setAttribute("data-theme",t);if(q)localStorage.setItem("pocket-theme",q);}catch(e){}})();</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><b>PROOF</b><span>本地原型工作台</span></div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a class="on" href="projects.html">全部项目</a>
+      <a href="design.html">规范</a>
+    </nav>
+    <button class="themebtn" id="themeBtn" aria-label="切换主题"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+    <div class="status"><span class="dot"></span><span>本地 · :8321</span></div>
+  </div>
+
+  <section class="pagehead rise">
+    <div>
+      <div class="eyebrow">全部项目</div>
+      <h1 id="headline">—</h1>
+      <p class="lede">每次发送就是一个项目。点进去按类型浏览里面的文件，或直接打开入口。</p>
+    </div>
+  </section>
+
+  <div class="filters rise" id="kinds"></div>
+  <div class="grid rise" id="list"></div>
+
+  <div class="foot">
+    <div>数据更新时间 <code id="updated">—</code></div>
+    <div style="text-align:right">PROOF · 全部项目<br><span style="font-family:var(--mono);font-size:11px">home-v3</span></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script src="data.js"></script>
+<script>
+(async function () {
+  var data = await loadData();
+  var projects = (data.projects || []).slice();
+  var totals = data.totals || {};
+  document.getElementById('updated').textContent = data.updated || '—';
+  document.getElementById('headline').textContent = projects.length
+    ? projects.length + ' 个项目，' + projects.reduce(function (s, p) { return s + p.count; }, 0) + ' 个文件'
+    : '还没有项目';
+
+  var order = ['web', 'image', 'video', 'doc', 'asset', 'file'];
+  document.getElementById('kinds').innerHTML = order.filter(function (k) { return totals[k]; }).map(function (k) {
+    return '<a class="chip" href="files.html?kind=' + k + '">' + icon(k, 13) + ' ' + kindLabel(k) + ' <span style="opacity:.6">' + totals[k] + '</span></a>';
+  }).join('');
+
+  var list = document.getElementById('list');
+  if (!projects.length) {
+    list.innerHTML = '<div class="card"><div class="name">空的</div><div class="desc">在 Mac 上说「把这个发到 iPad」。</div></div>';
+    return;
+  }
+  list.innerHTML = projects.map(function (p) {
+    return '<a class="card" href="project.html?p=' + encodeURIComponent(p.slug) + '">' +
+      '<div class="thumb" style="display:flex;align-items:center;justify-content:center">' + icon(p.kind, 30) + '</div>' +
+      '<div class="name">' + esc(title(p.name)) + '</div>' +
+      '<div class="desc">' + kindLabel(p.kind) + ' · ' + p.count + ' 个文件</div>' +
+      (p.broken ? '<div class="tags" style="display:flex;gap:6px"><span class="chip acc">链接失效</span></div>' : '') +
+      '<div class="meta"><span>' + fmtAgo(p.ts) + '</span><span>' + fmtBytes(p.bytes) + '</span></div>' +
+    '</a>';
+  }).join('');
+})();
+</script>
+</body>
+</html>

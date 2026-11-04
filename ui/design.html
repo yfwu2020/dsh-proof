@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>PROOF · 设计规范</title>
+<link rel="stylesheet" href="app.css">
+<script>(function(){try{var q=new URLSearchParams(location.search).get("theme");var t=q||localStorage.getItem("pocket-theme");if(!t)t=(window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";document.documentElement.setAttribute("data-theme",t);if(q)localStorage.setItem("pocket-theme",q);}catch(e){}})();</script>
+<style>
+  .sw{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+  .sw .item{border:1px solid var(--line);border-radius:11px;overflow:hidden;background:var(--surface)}
+  .sw .chipcolor{height:46px}
+  .sw .lab{padding:8px 10px;font-family:var(--mono);font-size:10.5px;color:var(--muted);line-height:1.5}
+  .sw .lab b{display:block;color:var(--ink-2);font-size:11px}
+  .row2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .spec{border-top:1px solid var(--line);padding:16px 0;display:flex;gap:18px;align-items:baseline;flex-wrap:wrap}
+  .spec .name{font-family:var(--mono);font-size:11px;color:var(--muted);min-width:110px;letter-spacing:1px}
+  .scale{display:flex;align-items:flex-end;gap:8px}
+  .scale i{display:block;background:var(--surface-2);border:1px solid var(--line);border-radius:4px}
+  .note{font-size:13.5px;color:var(--muted);line-height:1.75}
+  .demo{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  @media (max-width:820px){
+    .row2{grid-template-columns:1fr}
+    .spec{flex-direction:column;align-items:flex-start;gap:6px}
+    .spec .name{min-width:0}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="topbar">
+    <div class="brand"><b>PROOF</b><span>设计规范</span></div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="projects.html">全部项目</a>
+      <a class="on" href="design.html">规范</a>
+    </nav>
+    <button class="themebtn" id="themeBtn" aria-label="切换主题"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+    <div class="status"><span class="dot"></span><span>v1 · 2026-10-31</span></div>
+  </div>
+
+  <section class="pagehead">
+    <div>
+      <div class="eyebrow">设计规范</div>
+      <h1>纸、墨、一个强调色</h1>
+      <p class="lede">这套界面的全部规则都在这一页。点右上角切换深浅色，组件会跟着变 —— 规范里的颜色不是写死的，是 token。</p>
+    </div>
+  </section>
+
+  <!-- 色彩 -->
+  <div class="sec-head"><h3>色彩 · 语义 token</h3><span class="note">浅色 / 深色</span></div>
+  <div class="row2">
+    <div><div class="note" style="margin-bottom:8px">浅色</div>
+    <div class="sw">
+      <div class="item"><div class="chipcolor" style="background:#F7F3EB"></div><div class="lab"><b>--bg</b>#F7F3EB</div></div>
+      <div class="item"><div class="chipcolor" style="background:#FCF9F3"></div><div class="lab"><b>--surface</b>#FCF9F3</div></div>
+      <div class="item"><div class="chipcolor" style="background:#EFE9DD"></div><div class="lab"><b>--surface-2</b>#EFE9DD</div></div>
+      <div class="item"><div class="chipcolor" style="background:#17140F"></div><div class="lab"><b>--ink</b>#17140F</div></div>
+      <div class="item"><div class="chipcolor" style="background:#8A8175"></div><div class="lab"><b>--muted</b>#8A8175</div></div>
+      <div class="item"><div class="chipcolor" style="background:#DED5C6"></div><div class="lab"><b>--line</b>#DED5C6</div></div>
+    </div></div>
+    <div><div class="note" style="margin-bottom:8px">深色</div>
+    <div class="sw">
+      <div class="item"><div class="chipcolor" style="background:#14120F"></div><div class="lab"><b>--bg</b>#14120F</div></div>
+      <div class="item"><div class="chipcolor" style="background:#1C1916"></div><div class="lab"><b>--surface</b>#1C1916</div></div>
+      <div class="item"><div class="chipcolor" style="background:#24201B"></div><div class="lab"><b>--surface-2</b>#24201B</div></div>
+      <div class="item"><div class="chipcolor" style="background:#F3EEE5"></div><div class="lab"><b>--ink</b>#F3EEE5</div></div>
+      <div class="item"><div class="chipcolor" style="background:#8E8577"></div><div class="lab"><b>--muted</b>#8E8577</div></div>
+      <div class="item"><div class="chipcolor" style="background:#332D26"></div><div class="lab"><b>--line</b>#332D26</div></div>
+    </div></div>
+  </div>
+
+  <div class="sec-head"><h3>色彩 · 功能色</h3><span class="note">深色下提亮以维持对比度</span></div>
+  <div class="row2">
+    <div class="sw">
+      <div class="item"><div class="chipcolor" style="background:#C8452B"></div><div class="lab"><b>--accent</b>#C8452B</div></div>
+      <div class="item"><div class="chipcolor" style="background:#2F7D5A"></div><div class="lab"><b>--ok</b>#2F7D5A</div></div>
+      <div class="item"><div class="chipcolor" style="background:#B4762A"></div><div class="lab"><b>--warn</b>#B4762A</div></div>
+      <div class="item"><div class="chipcolor" style="background:#1E4A8F"></div><div class="lab"><b>--blue</b>#1E4A8F</div></div>
+    </div>
+    <div class="sw">
+      <div class="item"><div class="chipcolor" style="background:#E86A4C"></div><div class="lab"><b>--accent</b>#E86A4C</div></div>
+      <div class="item"><div class="chipcolor" style="background:#5FB88D"></div><div class="lab"><b>--ok</b>#5FB88D</div></div>
+      <div class="item"><div class="chipcolor" style="background:#DCA85E"></div><div class="lab"><b>--warn</b>#DCA85E</div></div>
+      <div class="item"><div class="chipcolor" style="background:#7BA6DE"></div><div class="lab"><b>--blue</b>#7BA6DE</div></div>
+    </div>
+  </div>
+
+  <!-- 字体 -->
+  <div class="sec-head"><h3>字体层级</h3><span class="note">衬线 / 无衬线 / 等宽，三层分工</span></div>
+  <div class="panel">
+    <div class="spec"><span class="name">Display</span>
+      <span style="font-family:var(--serif);font-size:44px;font-weight:700;letter-spacing:-.4px">做好的原型</span>
+      <span class="note">Songti SC · clamp(34–48)</span></div>
+    <div class="spec"><span class="name">Title</span>
+      <span style="font-family:var(--serif);font-size:28px;font-weight:700">登录流程改版</span>
+      <span class="note">Songti SC · 28 / 700</span></div>
+    <div class="spec"><span class="name">Body</span>
+      <span style="font-size:16.5px;line-height:1.75;color:var(--ink-2)">手机号 + 验证码登录，含错误态、倒计时与重发限制。</span>
+      <span class="note">PingFang SC · 16.5 / 1.75</span></div>
+    <div class="spec"><span class="name">Small</span>
+      <span style="font-size:13.5px;color:var(--muted)">描述与辅助信息用这一档</span>
+      <span class="note">PingFang SC · 13.5</span></div>
+    <div class="spec"><span class="name">Meta</span>
+      <span style="font-family:var(--mono);font-size:12px;color:var(--ink-2)">v3 · 10-31 01:42 · :8321</span>
+      <span class="note">SF Mono · 11–12.5 · tabular</span></div>
+  </div>
+
+  <!-- 组件 -->
+  <div class="sec-head"><h3>组件 · 芯片与按钮</h3><span class="note">触控目标 ≥ 40px</span></div>
+  <div class="panel">
+    <div class="demo" style="margin-bottom:16px">
+      <span class="chip">默认</span>
+      <span class="chip on">选中 / 当前</span>
+      <span class="chip acc"><span class="doti"></span>刚刚更新</span>
+      <span class="chip ok">构建成功</span>
+    </div>
+    <div class="demo">
+      <a class="btn" href="#">主操作 <svg class="ico inl" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg></a>
+      <a class="btn ghost" href="#">次要操作</a>
+      <a class="btn sm" href="#">小号</a>
+      <a class="btn" href="#" disabled>禁用</a>
+    </div>
+  </div>
+
+  <div class="sec-head"><h3>组件 · 卡片与面板</h3><span class="note">卡片整块可点</span></div>
+  <div class="grid" style="grid-template-columns:1fr 1fr">
+    <a class="card" href="#">
+      <div class="thumb"><i class="a"></i><i class="b"></i><i class="c"></i></div>
+      <div class="name">项目卡片</div>
+      <div class="desc">缩略图用抽象块，不用截图（截图会过期）</div>
+      <div class="meta"><span><b>v3</b> · 2 分钟前</span><span>3 版</span></div>
+    </a>
+    <div class="panel">
+      <div class="k">键值面板</div>
+      <div class="kv"><span>源目录</span><b>~/code/myapp</b></div>
+      <div class="kv"><span>发布路径</span><b>/p/myapp/v3/</b></div>
+      <div class="kv"><span>占用</span><b>12 MB</b></div>
+    </div>
+  </div>
+
+
+
+  <!-- 尺度 -->
+
+  <div class="sec-head"><h3>图标</h3><span class="note">内联 SVG · 随 currentColor 变色</span></div>
+  <div class="panel">
+    <div class="demo" style="gap:26px;margin-bottom:14px">
+      <span style="display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--muted)">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>月亮</span>
+      <span style="display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--muted)">
+        <svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>太阳</span>
+      <span style="display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--ok)">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5"/></svg>成功</span>
+      <span style="display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--accent)">
+        <svg class="ico" viewBox="0 0 24 24"><path d="M12 7.5v5.5"/><circle cx="12" cy="16.6" r=".8" fill="currentColor" stroke="none"/></svg>失败</span>
+      <span style="display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--muted)">
+        <svg class="ico inl" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>进入</span>
+      <span style="display:inline-flex;align-items:center;gap:8px;font-size:13.5px;color:var(--accent)">
+        <span class="doti"></span>标记点</span>
+    </div>
+    <div class="note">不用 emoji，也不用字符图标 —— 它们在别的设备上会变成彩色表情或方块。SVG 用 <code style="font-family:var(--mono)">currentColor</code>，深浅色自动适配。</div>
+  </div>
+
+  <div class="sec-head"><h3>间距与圆角</h3><span class="note">4 的倍数</span></div>
+  <div class="panel">
+    <div class="spec"><span class="name">间距</span>
+      <div class="scale">
+        <i style="width:4px;height:20px"></i><i style="width:8px;height:20px"></i>
+        <i style="width:12px;height:20px"></i><i style="width:16px;height:20px"></i>
+        <i style="width:24px;height:20px"></i><i style="width:32px;height:20px"></i>
+        <i style="width:52px;height:20px"></i>
+      </div>
+      <span class="note">4 / 8 / 12 / 16 / 24 / 32 / 52</span></div>
+    <div class="spec"><span class="name">圆角</span>
+      <div class="scale">
+        <i style="width:34px;height:34px;border-radius:7px"></i>
+        <i style="width:34px;height:34px;border-radius:11px"></i>
+        <i style="width:34px;height:34px;border-radius:16px"></i>
+      </div>
+      <span class="note">chip 7 / 按钮 11 / 卡片 16</span></div>
+  </div>
+
+  <div class="sec-head"><h3>两条硬规则</h3><span class="note">都踩过坑</span></div>
+  <div class="panel">
+    <div class="kv" style="align-items:flex-start"><span style="max-width:44%">动画只动 <code style="font-family:var(--mono)">transform</code>，绝不动 <code style="font-family:var(--mono)">opacity</code></span>
+      <b style="font-family:var(--sans);font-weight:400;text-align:right;max-width:52%;white-space:normal;font-size:13.5px;color:var(--muted)">动画停在中间态时，内容会半透明甚至全白</b></div>
+    <div class="kv" style="align-items:flex-start"><span style="max-width:44%">颜色一律走 token</span>
+      <b style="font-family:var(--sans);font-weight:400;text-align:right;max-width:52%;white-space:normal;font-size:13.5px;color:var(--muted)">硬编码色值会在暗色模式下变成白块</b></div>
+  </div>
+
+  <div class="foot">
+    <div>完整说明见 <code>DESIGN.md</code>（同目录）<br>
+      本页即规范的可视化版本，随 token 变化。</div>
+    <div style="text-align:right">PROOF · design system v1<br>
+      <span style="font-family:var(--mono);font-size:11px">2026-10-31</span></div>
+  </div>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>

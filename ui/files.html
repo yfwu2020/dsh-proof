@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>PROOF · 文件</title>
+<link rel="stylesheet" href="app.css">
+<script>(function(){try{var q=new URLSearchParams(location.search).get("theme");var t=q||localStorage.getItem("pocket-theme");if(!t)t=(window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light";document.documentElement.setAttribute("data-theme",t);if(q)localStorage.setItem("pocket-theme",q);}catch(e){}})();</script>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><b>PROOF</b><span>本地原型工作台</span></div>
+    <nav class="nav">
+      <a href="index.html">首页</a>
+      <a href="projects.html">全部项目</a>
+      <a href="design.html">规范</a>
+    </nav>
+    <button class="themebtn" id="themeBtn" aria-label="切换主题"><svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+    <div class="status"><span class="dot"></span><span>本地 · :8321</span></div>
+  </div>
+
+  <section class="pagehead rise">
+    <div>
+      <div class="eyebrow">文件</div>
+      <h1 id="headline">—</h1>
+      <p class="lede">按类型浏览所有发到这台 iPad 上的文件，点一行直接打开。</p>
+    </div>
+  </section>
+
+  <div class="filters rise" id="kinds"></div>
+  <div class="files rise" id="list"></div>
+
+  <div class="foot">
+    <div>共 <code id="count">0</code> 个文件</div>
+    <div style="text-align:right">PROOF · 文件<br><span style="font-family:var(--mono);font-size:11px">home-v3</span></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<script src="data.js"></script>
+<script>
+(async function () {
+  var data = await loadData();
+  var projects = data.projects || [];
+  var totals = data.totals || {};
+  var kind = new URLSearchParams(location.search).get('kind') || '';
+
+  var order = ['web', 'image', 'video', 'doc', 'asset', 'file'];
+  var chips = '<a class="chip' + (kind ? '' : ' on') + '" href="files.html">全部 ' +
+    projects.reduce(function (s, p) { return s + p.count; }, 0) + '</a>';
+  chips += order.filter(function (k) { return totals[k]; }).map(function (k) {
+    return '<a class="chip' + (kind === k ? ' on' : '') + '" href="files.html?kind=' + k + '">' +
+      icon(k, 13) + ' ' + kindLabel(k) + ' <span style="opacity:.6">' + totals[k] + '</span></a>';
+  }).join('');
+  document.getElementById('kinds').innerHTML = chips;
+
+  var rows = [];
+  projects.forEach(function (p) {
+    p.files.forEach(function (f) {
+      if (kind && f.kind !== kind) return;
+      rows.push({ p: p, f: f });
+    });
+  });
+  rows.sort(function (a, b) { return b.p.ts - a.p.ts; });
+
+  document.getElementById('headline').textContent = kind
+    ? kindLabel(kind) + ' · ' + rows.length + ' 个'
+    : '全部文件 · ' + rows.length + ' 个';
+  document.getElementById('count').textContent = rows.length;
+
+  var list = document.getElementById('list');
+  if (!rows.length) {
+    list.innerHTML = '<div class="empty">这个分类下还没有文件</div>';
+  } else {
+    list.innerHTML = rows.slice(0, 300).map(function (r) {
+      var thumbInner = r.f.kind === 'image'
+        ? '<img src="' + entryHref(r.p, r.f.p) + '" alt="" loading="lazy">'
+        : icon(r.f.kind, 18);
+      return '<a class="frow" href="' + entryHref(r.p, r.f.p) + '" target="_blank" rel="noopener">' +
+        '<span class="fthumb">' + thumbInner + '</span>' +
+        '<span class="fname">' + esc(r.f.p) + '<br><span style="color:var(--muted);font-size:11px">' + esc(title(r.p.name)) + '</span></span>' +
+        '<span class="fmeta">' + fmtBytes(r.f.bytes) + '</span>' +
+      '</a>';
+    }).join('');
+  }
+})();
+</script>
+</body>
+</html>
