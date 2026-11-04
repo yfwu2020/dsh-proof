@@ -37,6 +37,15 @@ export const Config = z.object({
 
 const SKIP = new Set(['node_modules', '.git', '.DS_Store', '.proof'])
 
+/** 与 server.py 的护城墙对齐：这些目录/文件不进投放目录（copy 会真占盘，link 只是没必要） */
+const SKIP_DIRS = new Set(['__pycache__', 'venv', '.venv', '.next', 'dist_node'])
+const SECRET_EXT = /\.(pem|key|p12|pfx|keystore)$/i
+
+/** 是否跳过这个条目：依赖/缓存/点文件/密钥一律不发（HTTP 层本来就 404，copy 还会白占盘） */
+function skipEntry(name: string): boolean {
+  return SKIP.has(name) || SKIP_DIRS.has(name) || name.startsWith('.') || SECRET_EXT.test(name)
+}
+
 /** 未配置 root 时的默认投放目录（每个用户各自的 home 下） */
 function defaultRoot(): string {
   return path.join(os.homedir(), '.proof')
@@ -141,7 +150,7 @@ function kindOfFile(p: string): Kind {
 function copyTree(src: string, dest: string): void {
   fs.mkdirSync(dest, { recursive: true })
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    if (SKIP.has(entry.name)) continue
+    if (skipEntry(entry.name)) continue
     const s = path.join(src, entry.name)
     const d = path.join(dest, entry.name)
     if (entry.isDirectory()) copyTree(s, d)
@@ -161,7 +170,7 @@ function collectFiles(dir: string): FileRec[] {
       return
     }
     for (const entry of entries) {
-      if (SKIP.has(entry.name)) continue
+      if (skipEntry(entry.name)) continue
       const r = rel ? `${rel}/${entry.name}` : entry.name
       const full = path.join(base, r)
       let st: fs.Stats
@@ -402,7 +411,7 @@ export function apply(ctx: Context, config: Config): void {
               } else if (st.isDirectory()) {
                 // 软链接：只指路，不搬家。目录里逐条建链接（跳过 node_modules/.git）
                 for (const entry of fs.readdirSync(src)) {
-                  if (SKIP.has(entry)) continue
+                  if (skipEntry(entry)) continue
                   fs.symlinkSync(path.join(src, entry), path.join(staging, entry))
                 }
               } else {
