@@ -288,6 +288,34 @@ function stopServer(root: string): boolean {
   return true
 }
 
+/** 端口没监听时，清掉上一次留下的 server.json（死 PID 不该一直挂在状态文件里） */
+function cleanServerState(root: string): void {
+  fs.rmSync(path.join(root, '.proof', 'server.json'), { force: true })
+}
+
+/**
+ * link 项目的文件清单是发送那一刻的快照：源文件被改过，清单里的大小/mtime 就过时了。
+ * 这里跟随软链接重扫一遍，把 items.json 和 data.json 修正回来。
+ */
+function refreshLinks(root: string, reg: Registry): boolean {
+  let changed = false
+  for (const p of Object.values(reg.projects)) {
+    if (p.mode !== 'link') continue
+    const files = collectFiles(path.join(root, p.dir))
+    if (!files.length) continue
+    if (JSON.stringify(files) === JSON.stringify(p.files)) continue
+    const counts: Record<string, number> = {}
+    for (const f of files) counts[f.kind] = (counts[f.kind] ?? 0) + 1
+    p.files = files
+    p.counts = counts
+    p.count = files.length
+    p.bytes = files.reduce((s, f) => s + f.bytes, 0)
+    p.kind = projectKind(files)
+    changed = true
+  }
+  return changed
+}
+
 export function apply(ctx: Context, config: Config): void {
   const root = config.root ? path.resolve(config.root) : defaultRoot()
   const regFile = () => path.join(root, '.proof', 'items.json')
@@ -439,8 +467,13 @@ export function apply(ctx: Context, config: Config): void {
           async execute(args: { verbose?: boolean }) {
             const ip = lanIPv4()
             const running = await probe('127.0.0.1', config.port)
+            if (!running) cleanServerState(root)
             const lan = ip ? `http://${ip}:${config.port}/` : '（未找到局域网地址）'
             const reg = readJson<Registry>(regFile(), { projects: {} })
+            if (refreshLinks(root, reg)) {
+              writeJson(regFile(), reg)
+              rebuildData(root, reg)
+            }
             const list = Object.values(reg.projects)
             const broken = checkLinks(root, reg)
             markBroken(root, broken)

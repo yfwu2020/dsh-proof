@@ -32,6 +32,64 @@ UI_PREFIX = "/proof/home-v1"
 BLOCK_DIRS = {"node_modules", "__pycache__", "venv", ".venv", ".next", "dist_node"}
 BLOCK_EXTS = (".pem", ".key", ".p12", ".pfx", ".keystore", ".env", ".npmrc", ".netrc")
 
+# link 项目里的文件是软链接：源文件一改，data.json 里记的大小/mtime 就是旧快照。
+# 所以 /data.json 每次请求都按实际情况重扫一遍（规则与 src/index.ts 的 collectFiles 对齐）。
+SKIP_NAMES = {"node_modules", ".git", ".DS_Store", ".proof"}
+MAX_FILES = 400
+MAX_DEPTH = 8
+KIND_EXTS = {
+    "web": (".html", ".htm"),
+    "image": (".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".avif", ".heic"),
+    "video": (".mp4", ".mov", ".webm", ".m4v", ".ogv"),
+    "doc": (".pdf", ".md", ".txt", ".csv"),
+    "asset": (".js", ".mjs", ".css", ".json", ".wasm", ".map", ".woff", ".woff2", ".ttf"),
+}
+
+
+def kind_of(name: str) -> str:
+    ext = os.path.splitext(name)[1].lower()
+    for kind, exts in KIND_EXTS.items():
+        if ext in exts:
+            return kind
+    return "file"
+
+
+def scan_files(base: str, rel: str = "", depth: int = 0, out=None) -> list:
+    if out is None:
+        out = []
+    if len(out) >= MAX_FILES or depth > MAX_DEPTH:
+        return out
+    try:
+        entries = sorted(os.listdir(os.path.join(base, rel)))
+    except OSError:
+        return out
+    for name in entries:
+        if name in SKIP_NAMES:
+            continue
+        r = rel + "/" + name if rel else name
+        full = os.path.join(base, r)
+        try:
+            st = os.stat(full)  # 跟随软链接
+        except OSError:
+            continue
+        if os.path.isdir(full):
+            scan_files(base, r, depth + 1, out)
+        elif os.path.isfile(full):
+            out.append({"p": r, "kind": kind_of(r), "bytes": st.st_size, "mtime": int(st.st_mtime * 1000)})
+        if len(out) >= MAX_FILES:
+            break
+    return out
+
+
+def project_kind(files: list) -> str:
+    if any(f["p"].lower().endswith("index.html") for f in files):
+        return "web"
+    if files and all(f["kind"] == "image" for f in files):
+        return "image"
+    if files and all(f["kind"] == "video" for f in files):
+        return "video"
+    return files[0]["kind"] if len(files) == 1 else "file"
+
 
 def blocked(path: str) -> bool:
     for seg in path.split("/"):
@@ -101,7 +159,11 @@ class Handler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def send_data(self):
-        """实时重算断链：每次请求都反映此刻的真实状态，不依赖有人调用工具。"""
+        """实时重算：每次请求都反映此刻的真实状态，不依赖有人调用工具。
+
+        - 断链：link 项目的软链接目标是否还在
+        - 清单：link 项目的文件大小/mtime 按源文件现算（发送时的快照会被源文件改动弄旧）
+        """
         try:
             with open(os.path.join(ROOT, "data.json"), encoding="utf-8") as f:
                 data = json.load(f)
@@ -124,6 +186,24 @@ class Handler(SimpleHTTPRequestHandler):
                 proj["missing"] = missing[:5]
             else:
                 proj.pop("missing", None)
+
+            files = scan_files(d)
+            if files:
+                counts = {}
+                for f in files:
+                    counts[f["kind"]] = counts.get(f["kind"], 0) + 1
+                proj["files"] = files
+                proj["count"] = len(files)
+                proj["counts"] = counts
+                proj["bytes"] = sum(f["bytes"] for f in files)
+                proj["kind"] = project_kind(files)
+
+        totals = {}
+        for proj in data.get("projects", []):
+            for k, v in (proj.get("counts") or {}).items():
+                totals[k] = totals.get(k, 0) + v
+        data["totals"] = totals
+
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "application/json; charset=utf-8")
