@@ -161,8 +161,8 @@ class Handler(SimpleHTTPRequestHandler):
     def send_data(self):
         """实时重算：每次请求都反映此刻的真实状态，不依赖有人调用工具。
 
-        - 断链：link 项目的软链接目标是否还在
-        - 清单：link 项目的文件大小/mtime 按源文件现算（发送时的快照会被源文件改动弄旧）
+        - 断链：link / mixed 项目里登记的文件此刻是否还存在（能发现嵌套的断链）
+        - 清单：这些项目的文件大小/mtime 按现场重扫（发送时的快照会被源文件改动弄旧）
         """
         try:
             with open(os.path.join(ROOT, "data.json"), encoding="utf-8") as f:
@@ -170,17 +170,23 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception:
             data = {"updated": None, "totals": {}, "projects": []}
         for proj in data.get("projects", []):
-            if proj.get("mode") != "link":
+            if proj.get("mode") == "copy":
                 proj["broken"] = False
+                proj.pop("missing", None)
                 continue
             d = os.path.join(ROOT, proj.get("dir", ""))
-            missing = []
-            try:
-                for entry in os.listdir(d):
-                    if not os.path.exists(os.path.join(d, entry)):  # 跟随链接
-                        missing.append(entry)
-            except OSError:
-                missing = ["(项目目录不存在)"]
+            if not os.path.isdir(d):
+                proj["broken"] = True
+                proj["missing"] = ["(项目目录不存在)"]
+                continue
+
+            recorded = proj.get("files") or []
+            missing = [f["p"] for f in recorded if not os.path.exists(os.path.join(d, f["p"]))]
+            if not recorded:  # 老登记没有清单：退化为只看顶层
+                try:
+                    missing = [e for e in os.listdir(d) if not os.path.exists(os.path.join(d, e))]
+                except OSError:
+                    missing = ["(项目目录不存在)"]
             proj["broken"] = bool(missing)
             if missing:
                 proj["missing"] = missing[:5]
