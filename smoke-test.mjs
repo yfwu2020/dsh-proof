@@ -247,3 +247,49 @@ test('旧登记（一次发送一个项目）迁移成按根合并', async (t) =
   assert.ok(readdirSync(join(root, '.proof')).some((f) => f.startsWith('items.json.bak-pre080-')));
   assert.ok(existsSync(join(root, 'f', 'legacy-app', 'proto', 'index.html')));
 });
+
+test('entry：只发成品网页那一版，调试/草稿/旧版本都不进项目', async (t) => {
+  const root = tempRoot('final');
+  const proj = join(root, 'game');
+  mkdirSync(join(proj, 'old-proto'), { recursive: true });
+  mkdirSync(join(proj, 'proto3d', 'assets'), { recursive: true });
+  writeFileSync(join(proj, 'package.json'), '{}');
+  writeFileSync(join(proj, 'old-proto', 'index.html'), 'old');
+  writeFileSync(join(proj, 'proto3d', 'index.html'), '<script src="main.js"></script>');
+  writeFileSync(join(proj, 'proto3d', 'main.js'), '// game');
+  writeFileSync(join(proj, 'proto3d', '_debug-shadow.html'), 'debug');
+  writeFileSync(join(proj, 'proto3d', 'draft.html'), 'draft');
+  writeFileSync(join(proj, 'proto3d', 'assets', 'a.png'), 'png');
+
+  const port = await freePort();
+  const tools = mount(root, port);
+  cleanup(t, root, tools);
+
+  const msg = await tools.get('proof_send').execute({
+    source: join(proj, 'proto3d'),
+    entry: 'index.html',
+  });
+  assert.match(msg, /整体替换/);
+
+  const data = await (await fetch(`http://127.0.0.1:${port}/data.json`)).json();
+  assert.equal(data.projects.length, 1);
+  const p = data.projects[0];
+  assert.equal(p.slug, 'game');
+  // 成品目录被提到项目根：/f/<slug>/ 直接就是那一版网页
+  assert.deepEqual(p.files.map((f) => f.p).sort(), ['assets/a.png', 'index.html', 'main.js']);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/f/game/`)).status, 200);
+  assert.equal((await fetch(`http://127.0.0.1:${port}/f/game/_debug-shadow.html`)).status, 404);
+
+  // 再发一版别的目录（仍是 entry）：整体替换，旧内容不残留
+  mkdirSync(join(proj, 'proto4d'), { recursive: true });
+  writeFileSync(join(proj, 'proto4d', 'index.html'), '<h1>v2</h1>');
+  await tools.get('proof_send').execute({ source: join(proj, 'proto4d'), entry: 'index.html' });
+  const again = (await (await fetch(`http://127.0.0.1:${port}/data.json`)).json()).projects[0];
+  assert.deepEqual(again.files.map((f) => f.p), ['index.html']);
+  assert.match(await (await fetch(`http://127.0.0.1:${port}/f/game/`)).text(), /v2/);
+
+  // 删单条子树；删空后项目随之移除
+  assert.match(await tools.get('proof_remove').execute({ project: 'game', path: 'index.html' }), /最后一条子树|已删除/);
+  const empty = await (await fetch(`http://127.0.0.1:${port}/data.json`)).json();
+  assert.equal(empty.projects.length, 0);
+});
