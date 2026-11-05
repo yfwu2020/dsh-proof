@@ -12,7 +12,7 @@
  * 断言失败时也照样收尸，`npm test` 不该在系统临时目录里留下任何东西。
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync, readdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, statSync, readdirSync, readFileSync, existsSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import net from 'node:net';
@@ -66,29 +66,42 @@ function mount(root, port) {
   return tools;
 }
 
-/** 临时 root + 自动删除（断言失败也删） */
-function tempRoot(t, tag) {
-  const root = mkdtempSync(join(tmpdir(), `proof-${tag}-`));
-  t.after(() => rmSync(root, { recursive: true, force: true }));
-  return root;
+/** 临时 root（不在这里注册清理：清理由 cleanup 统一做，顺序才对） */
+function tempRoot(tag) {
+  return mkdtempSync(join(tmpdir(), `proof-${tag}-`));
+}
+
+/**
+ * 统一收尸：**先停服务、再删目录**，放在同一个 after 钩子里。
+ * node:test 的 after 按注册顺序执行；拆成两个钩子会先删目录、把 server.json 一起删掉，
+ * 于是停服务时找不到 pid，后台进程就变成孤儿（实测过）。
+ */
+function cleanup(t, root, tools) {
+  t.after(async () => {
+    if (tools) await tools.get('proof_serve').execute({ action: 'stop' }).catch(() => {});
+    rmSync(root, { recursive: true, force: true });
+  });
 }
 
 test('注册四个工具', async (t) => {
-  const tools = mount(tempRoot(t, 'surface'), await freePort());
+  const root = tempRoot('surface');
+  const tools = mount(root, await freePort());
+  cleanup(t, root);
   assert.deepEqual([...tools.keys()].sort(), ['proof_remove', 'proof_send', 'proof_serve', 'proof_status']);
 });
 
 test('服务没起来时报「未运行」，且不会顺手拉起服务', async (t) => {
-  const root = tempRoot(t, 'cold');
+  const root = tempRoot('cold');
   const port = await freePort();
   const tools = mount(root, port);
+  cleanup(t, root, tools);
   const out = await tools.get('proof_status').execute({});
   assert.match(out, /PROOF 未运行/);
   assert.equal(await listening(port), false);
 });
 
 test('发送目录 → 服务可用 → 实时大小 → 护城墙 → 删除', async (t) => {
-  const root = tempRoot(t, 'e2e');
+  const root = tempRoot('e2e');
   const src = join(root, 'src');
   mkdirSync(src, { recursive: true });
   writeFileSync(join(src, 'index.html'), '<h1>proof-e2e</h1>');
@@ -97,11 +110,8 @@ test('发送目录 → 服务可用 → 实时大小 → 护城墙 → 删除', 
 
   const port = await freePort();
   const tools = mount(root, port);
+  cleanup(t, root, tools);
   const base = `http://127.0.0.1:${port}`;
-  // 无论断言成败，都要把这个端口上的服务收掉
-  t.after(async () => {
-    await tools.get('proof_serve').execute({ action: 'stop' }).catch(() => {});
-  });
 
   const sent = await tools.get('proof_send').execute({ source: src, name: 'demo' });
   assert.match(sent, /已发送 demo/);
@@ -145,12 +155,95 @@ test('发送目录 → 服务可用 → 实时大小 → 护城墙 → 删除', 
 
   await tools.get('proof_serve').execute({ action: 'stop' });
   assert.equal(await listening(port), false);
+  // after 钩子靠 server.json 里的 pid 收尸：停完必须把它删掉，否则钩子找不到 pid 会孤儿化
+  assert.equal(existsSync(join(root, '.proof', 'server.json')), false);
 });
 
 test('发送不存在的路径要报错，且不留下项目', async (t) => {
-  const root = tempRoot(t, 'missing');
+  const root = tempRoot('missing');
   const tools = mount(root, await freePort());
+  cleanup(t, root, tools);
   await assert.rejects(() => tools.get('proof_send').execute({ source: join(root, 'nope') }), /路径不存在/);
   const status = await tools.get('proof_status').execute({ verbose: true });
   assert.match(status, /项目：0 个/);
+});
+
+test('同一项目根下的不同路径归入同一个项目，重发只替换对应子树', async (t) => {
+  const root = tempRoot('roots');
+  const proj = join(root, 'dsh-demo');
+  mkdirSync(join(proj, 'prototype', 'assets'), { recursive: true });
+  mkdirSync(join(proj, 'out'), { recursive: true });
+  writeFileSync(join(proj, 'package.json'), '{"name":"dsh-demo"}');
+  writeFileSync(join(proj, 'prototype', 'index.html'), '<h1>proto</h1>');
+  writeFileSync(join(proj, 'prototype', 'assets', 'a.png'), 'png');
+  writeFileSync(join(proj, 'out', 'preview.png'), 'png2');
+
+  const port = await freePort();
+  const tools = mount(root, port);
+  cleanup(t, root, tools);
+
+  // 第一次：发目录 prototype/
+  const first = await tools.get('proof_send').execute({ source: join(proj, 'prototype') });
+  assert.match(first, /归属：项目 dsh-demo · 子树 prototype（根 /);
+
+  // 第二次：发项目根之外的产物文件 out/preview.png —— 应归到同一个项目
+  const second = await tools.get('proof_send').execute({ source: join(proj, 'out', 'preview.png') });
+  assert.match(second, /归属：项目 dsh-demo · 子树 out\/preview\.png/);
+
+  const data = await (await fetch(`http://127.0.0.1:${port}/data.json`)).json();
+  assert.equal(data.projects.length, 1, '同一个根的两次发送只能有一个项目');
+  const p = data.projects[0];
+  assert.equal(p.slug, 'dsh-demo');
+  assert.equal(p.root, proj);
+  assert.deepEqual([...p.sources.map((s) => s.rel)].sort(), ['out/preview.png', 'prototype']);
+  const paths = p.files.map((f) => f.p);
+  assert.ok(paths.includes('prototype/index.html'));
+  assert.ok(paths.includes('prototype/assets/a.png'));
+  assert.ok(paths.includes('out/preview.png'));
+
+  // 重发 prototype：只替换这条子树，out/preview.png 必须还在
+  writeFileSync(join(proj, 'prototype', 'index.html'), '<h1>proto v2</h1>');
+  await tools.get('proof_send').execute({ source: join(proj, 'prototype') });
+  const after = (await (await fetch(`http://127.0.0.1:${port}/data.json`)).json()).projects[0];
+  assert.ok(after.files.some((f) => f.p === 'out/preview.png'), '另一条子树不该被删');
+  assert.deepEqual(readdirSync(join(root, 'f')).sort(), ['dsh-demo']);
+  assert.deepEqual(readdirSync(join(root, 'f', 'dsh-demo')).sort(), ['out', 'prototype']);
+});
+
+test('旧登记（一次发送一个项目）迁移成按根合并', async (t) => {
+  const root = tempRoot('migrate');
+  const proj = join(root, 'legacy-app');
+  mkdirSync(join(proj, 'proto'), { recursive: true });
+  mkdirSync(join(proj, 'out'), { recursive: true });
+  writeFileSync(join(proj, 'package.json'), '{}');
+  writeFileSync(join(proj, 'proto', 'index.html'), 'x');
+  writeFileSync(join(proj, 'out', 'p.png'), 'y');
+
+  // 伪造 0.7 的成品：两个扁平项目目录 + 旧式登记
+  mkdirSync(join(root, 'f', 'legacy-a'), { recursive: true });
+  mkdirSync(join(root, 'f', 'legacy-b'), { recursive: true });
+  symlinkSync(join(proj, 'proto', 'index.html'), join(root, 'f', 'legacy-a', 'index.html'));
+  symlinkSync(join(proj, 'out', 'p.png'), join(root, 'f', 'legacy-b', 'p.png'));
+  mkdirSync(join(root, '.proof'), { recursive: true });
+  writeFileSync(
+    join(root, '.proof', 'items.json'),
+    JSON.stringify({
+      projects: {
+        'legacy-a': { slug: 'legacy-a', name: 'legacy-a', dir: 'f/legacy-a', src: join(proj, 'proto'), mode: 'link', ts: 1, at: 'x', bytes: 0, count: 1, counts: {}, files: [] },
+        'legacy-b': { slug: 'legacy-b', name: 'legacy-b', dir: 'f/legacy-b', src: join(proj, 'out', 'p.png'), mode: 'link', ts: 2, at: 'x', bytes: 0, count: 1, counts: {}, files: [] },
+      },
+    }),
+  );
+
+  const tools = mount(root, await freePort()); // apply() 时迁移
+  cleanup(t, root, tools);
+  const data = JSON.parse(readFileSync(join(root, 'data.json'), 'utf8'));
+  assert.equal(data.projects.length, 1, '同一个根的旧项目应合并成一个');
+  const p = data.projects[0];
+  assert.equal(p.slug, 'legacy-app');
+  assert.deepEqual([...p.sources.map((s) => s.rel)].sort(), ['out/p.png', 'proto']);
+  assert.deepEqual(readdirSync(join(root, 'f')).sort(), ['legacy-app'], '旧目录应清掉');
+  assert.ok(readdirSync(join(root, 'f', 'legacy-app')).sort().includes('out'));
+  assert.ok(readdirSync(join(root, '.proof')).some((f) => f.startsWith('items.json.bak-pre080-')));
+  assert.ok(existsSync(join(root, 'f', 'legacy-app', 'proto', 'index.html')));
 });
