@@ -315,6 +315,33 @@ function materializeInto(fDir: string, destDir: string, rel: string, src: string
   }
 }
 
+/** 成品目录里明显不是成品的文件：调试页、草稿、备份、临时文件 */
+const JUNK_NAME = /^_|(^|[.\-_])(debug|draft|backup|old)([.\-_]|$)|[.](bak|tmp|orig)$|~$/i
+
+/** 从已发布/已暂存的目录里剔除上述文件，返回剔除数量 */
+function pruneJunk(dir: string): number {
+  let removed = 0
+  const walk = (cur: string) => {
+    let entries: fs.Dirent[]
+    try {
+      entries = fs.readdirSync(cur, { withFileTypes: true })
+    } catch {
+      return
+    }
+    for (const entry of entries) {
+      const full = path.join(cur, entry.name)
+      if (JUNK_NAME.test(entry.name)) {
+        fs.rmSync(full, { recursive: true, force: true })
+        removed += 1
+        continue
+      }
+      if (entry.isDirectory()) walk(full)
+    }
+  }
+  walk(dir)
+  return removed
+}
+
 interface BrokenInfo {
   slug: string
   name: string
@@ -603,12 +630,14 @@ export function apply(ctx: Context, config: Config): void {
             name: { type: 'string', description: '项目名（默认取项目根目录名；已存在同根项目时忽略）' },
             mode: { type: 'string', description: 'link（默认，软链接不复制）或 copy（真复制一份；仅当用户明确要求时使用）' },
             project: { type: 'string', description: '强制归入某个已有项目（slug），用于没有锚点的散落文件' },
+            entry: { type: 'string', description: '成品入口（相对 source 的网页路径，如 index.html）：只发布入口所在目录，并剔除调试/草稿/备份类文件' },
+            replace: { type: 'boolean', description: '本次发送即项目的全部内容：旧子树一并清掉（发布最终成品时用）' },
           },
           output: {
             schema: { type: 'string' },
             render: (_a: unknown, v: unknown) => [{ type: 'text', text: String(v) }],
           },
-          async execute(args: { source: string; name?: string; mode?: string; project?: string }) {
+          async execute(args: { source: string; name?: string; mode?: string; project?: string; entry?: string; replace?: boolean }) {
             const r = requireRoot()
             const src = path.resolve(args.source)
             if (!fs.existsSync(src)) throw new Error(`路径不存在：${src}`)
@@ -623,8 +652,37 @@ export function apply(ctx: Context, config: Config): void {
             const name = existing ? existing.name : target.name
             const destDir = path.join(r, 'f', slug)
 
+            // 成品入口：发布入口所在的整个目录（带上它跑起来需要的资源），
+            // 而不是 source 目录里的一切 —— 这样 source=项目根时也不会把旧版本、草稿一起发出去
+            let publishSrc = src
+            let publishRel = target.rel
+            if (args.entry) {
+              const entryPath = st.isDirectory() ? path.join(src, path.normalize(args.entry)) : src
+              if (!fs.existsSync(entryPath)) throw new Error(`入口不存在：${entryPath}`)
+              if (!path.resolve(entryPath).startsWith(path.resolve(src))) throw new Error(`入口必须在 source 内：${args.entry}`)
+              publishSrc = path.dirname(entryPath)
+              // 成品即项目：入口所在目录直接作为项目内容（/f/<slug>/ 就能打开），
+              // 并且隐含“整体替换”，旧版本/旧子树不会留在项目里
+              publishRel = ''
+            }
+
+            const replace = Boolean(args.replace) || Boolean(args.entry)
             // 暂存 → 一步换上：失败只清暂存，已发布内容保持完整
-            materializeInto(path.join(r, 'f'), destDir, target.rel, src, mode)
+            if (replace) {
+              const staging = path.join(r, 'f', `.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`)
+              try {
+                materializeInto(path.join(r, 'f'), path.join(staging, publishRel), '', publishSrc, mode)
+                pruneJunk(path.join(staging, publishRel))
+                fs.rmSync(destDir, { recursive: true, force: true })
+                fs.mkdirSync(path.dirname(destDir), { recursive: true })
+                fs.renameSync(staging, destDir)
+              } finally {
+                fs.rmSync(staging, { recursive: true, force: true })
+              }
+            } else {
+              materializeInto(path.join(r, 'f'), destDir, publishRel, publishSrc, mode)
+              pruneJunk(path.join(destDir, publishRel))
+            }
 
             const files = collectFiles(destDir)
             const counts: Record<string, number> = {}
@@ -650,10 +708,10 @@ export function apply(ctx: Context, config: Config): void {
                 sources: [],
               } as ProjectRec)
 
-            if (target.rel === '') rec.sources = [{ rel: '', abs: src, mode }]
+            if (replace || publishRel === '') rec.sources = [{ rel: publishRel, abs: publishSrc, mode }]
             else {
-              rec.sources = (rec.sources ?? []).filter((s) => s.rel !== target.rel && !s.rel.startsWith(`${target.rel}/`))
-              rec.sources.push({ rel: target.rel, abs: src, mode })
+              rec.sources = (rec.sources ?? []).filter((s) => s.rel !== publishRel && !s.rel.startsWith(`${publishRel}/`))
+              rec.sources.push({ rel: publishRel, abs: publishSrc, mode })
             }
             rec.mode = deriveMode(rec.sources, mode)
             rec.root = target.root
@@ -676,7 +734,7 @@ export function apply(ctx: Context, config: Config): void {
             }
             return [
               `已发送 ${name}（${kindLabel[rec.kind] ?? rec.kind} · ${modeLabel(rec.mode)}）`,
-              `归属：项目 ${name} · ${target.rel ? `子树 ${target.rel}` : '整个项目'}（根 ${target.root}）`,
+              `归属：项目 ${name} · ${replace ? '整体替换' : publishRel ? `子树 ${publishRel}` : '整个项目'}（根 ${target.root}）`,
               `文件：${files.length} 个 · ${(bytesOf(files) / 1024).toFixed(0)} KB`,
               `项目页：${url}/proof/home-v1/project.html?p=${slug}`,
               `直接打开：${url}/${rec.dir}/`,
@@ -693,21 +751,53 @@ export function apply(ctx: Context, config: Config): void {
       ctx.tools.register(
         defineTool({
           name: 'proof_remove',
-          description: '删除一个已发送的项目（连同它的所有子树）。',
+          description: '删除一个已发送的项目；给 path 则只删项目里的那一条子树（用于清掉旧版本、调试目录）。',
           parameters: {
             project: { type: 'string', required: true, description: '项目 slug（见项目页地址 ?p=）' },
+            path: { type: 'string', description: '只删这条子树（项目内相对路径，如 prototype 或 out/x.png）' },
           },
           output: {
             schema: { type: 'string' },
             render: (_a: unknown, v: unknown) => [{ type: 'text', text: String(v) }],
           },
-          async execute(args: { project: string }) {
+          async execute(args: { project: string; path?: string }) {
             const r = requireRoot()
             const reg = readJson<Registry>(regFile(), { projects: {} })
             const slug = slugify(args.project)
             const rec = reg.projects[slug]
             if (!rec) throw new Error(`没有这个项目：${args.project}`)
-            fs.rmSync(path.join(r, rec.dir), { recursive: true, force: true })
+            const dir = path.join(r, rec.dir)
+
+            if (args.path) {
+              const rel = path.normalize(args.path).replace(/^[/\\]+/, '')
+              if (!rel || rel.startsWith('..')) throw new Error(`路径不合法：${args.path}`)
+              const target = path.join(dir, rel)
+              if (!path.resolve(target).startsWith(path.resolve(dir))) throw new Error(`路径越界：${args.path}`)
+              if (!fs.existsSync(target)) throw new Error(`子树不存在：${rel}`)
+              fs.rmSync(target, { recursive: true, force: true })
+              rec.sources = (rec.sources ?? []).filter((s) => s.rel !== rel && !s.rel.startsWith(`${rel}/`))
+              const files = collectFiles(dir)
+              if (!files.length) {
+                fs.rmSync(dir, { recursive: true, force: true })
+                delete reg.projects[slug]
+                writeJson(regFile(), reg)
+                rebuildData(r, reg)
+                return `已删除 ${rec.name} 的最后一条子树 ${rel}（项目随之移除）`
+              }
+              const counts: Record<string, number> = {}
+              for (const f of files) counts[f.kind] = (counts[f.kind] ?? 0) + 1
+              rec.files = files
+              rec.counts = counts
+              rec.count = files.length
+              rec.bytes = files.reduce((s, f) => s + f.bytes, 0)
+              rec.kind = projectKind(files)
+              rec.mode = deriveMode(rec.sources, 'link')
+              writeJson(regFile(), reg)
+              rebuildData(r, reg)
+              return `已删除 ${rec.name} 的子树 ${rel}（剩 ${files.length} 个文件）`
+            }
+
+            fs.rmSync(dir, { recursive: true, force: true })
             delete reg.projects[slug]
             writeJson(regFile(), reg)
             rebuildData(r, reg)
