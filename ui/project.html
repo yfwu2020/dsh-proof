@@ -54,14 +54,15 @@
 
   <div class="panel" style="margin-top:22px">
     <div class="k">来源</div>
-    <div class="kv"><span>源路径</span><b id="src">—</b></div>
+    <div class="kv"><span>项目根</span><b id="src">—</b></div>
+    <div class="kv"><span>已发送子树</span><b id="subtrees">—</b></div>
     <div class="kv"><span>存放位置</span><b id="dest">—</b></div>
     <div class="kv"><span>入口文件</span><b id="entry">—</b></div>
   </div>
 
   <div class="foot">
     <div>打开地址 <code id="addr">—</code><br>
-      同名再发一次会覆盖这个项目。</div>
+      重发同一个项目根下的路径，只会替换对应子树。</div>
     <div style="text-align:right">PROOF · 项目<br><span style="font-family:var(--mono);font-size:11px">home-v3</span></div>
   </div>
 
@@ -97,7 +98,7 @@
     '<span class="chip ok">已收到</span>' +
     '<span class="chip">' + kindLabel(p.kind) + '</span>' +
     '<span class="chip">' + fmtAgo(p.ts) + '</span>' +
-    '<span class="chip">' + (p.mode === 'copy' ? '副本' : '软链接') + '</span>' +
+    '<span class="chip">' + (p.mode === 'copy' ? '副本' : p.mode === 'mixed' ? '混合' : '软链接') + '</span>' +
     (p.broken ? '<span class="chip acc">链接失效</span>' : '');
 
   $('banner').innerHTML = p.broken
@@ -108,7 +109,10 @@
     '<div class="bt"><b>' + esc(title(p.name)) + '</b>' +
     '<div class="d">' + esc(p.at || '') + ' 收到 · ' + totalFiles + ' 个文件 · ' + fmtBytes(p.bytes) + '</div></div></div>';
 
-  $('src').textContent = p.src || '—';
+  $('src').textContent = p.root || p.src || '—';
+  $('subtrees').textContent = (p.sources && p.sources.length)
+    ? p.sources.map(function (s) { return s.rel ? s.rel + '/' : '（整个项目）'; }).join(' · ')
+    : '—';
   $('dest').textContent = '/' + p.dir + '/';
   $('entry').textContent = entry ? entry.p : '（无 index.html）';
   $('addr').textContent = location.origin + '/' + p.dir + '/';
